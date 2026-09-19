@@ -11,16 +11,16 @@ function illegalInvocation() {
   throw pageTypeError("Illegal invocation");
 }
 
-const convertDOMStringSequence = (() => {
-  /** Converts one value using DOMString-compatible coercion. */
-  function toDOMString(value) {
-    value = unwrap(value);
-    if (typeof value === "symbol") {
-      throw pageTypeError("Cannot convert a Symbol value to a string");
-    }
-    return String(value);
+/** Converts one value using DOMString-compatible coercion. */
+function convertDOMString(value) {
+  value = unwrap(value);
+  if (typeof value === "symbol") {
+    throw pageTypeError("Cannot convert a Symbol value to a string");
   }
+  return String(value);
+}
 
+const convertDOMStringSequence = (() => {
   /** Converts an iterable to a sequence of DOMStrings. */
   function convertDOMStringSequence(value) {
     if (value === undefined) return [];
@@ -59,12 +59,19 @@ const convertDOMStringSequence = (() => {
       }
 
       if (step.done) return result;
-      result.push(toDOMString(step.value));
+      result.push(convertDOMString(step.value));
     }
   }
 
   return convertDOMStringSequence;
 })();
+
+/** Requires a receiver carrying a private WebIDL brand. */
+function requireBrand(value, brand) {
+  const receiver = unwrap(value);
+  if (!brand.has(receiver)) illegalInvocation();
+  return receiver;
+}
 
 /** Validates a receiver using a native getter. */
 function requireNativeGetterReceiver(value, getter) {

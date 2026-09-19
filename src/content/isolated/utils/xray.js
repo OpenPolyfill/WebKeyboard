@@ -6,6 +6,15 @@ const {
   exportToPage,
   definePageProperty,
   setPagePrototype,
+  createPageMap,
+  pageMapSizeGetter,
+  pageMapGet,
+  pageMapHas,
+  pageMapSet,
+  pageMapEntries,
+  pageMapKeys,
+  pageMapValues,
+  pageMapForEach,
   pageTypeError,
   pagePromise,
   rejectedPagePromise,
@@ -14,6 +23,19 @@ const {
   const PageDOMException = window.DOMException;
   const PageError = window.Error;
   const PageTypeError = window.TypeError;
+  const PageMap = window.Map;
+  const PageMapPrototype = PageMap.prototype;
+  const pageMapSizeGetter = Reflect.getOwnPropertyDescriptor(
+    PageMapPrototype,
+    "size",
+  )?.get;
+  const pageMapGet = PageMapPrototype.get;
+  const pageMapHas = PageMapPrototype.has;
+  const pageMapSet = PageMapPrototype.set;
+  const pageMapEntries = PageMapPrototype.entries;
+  const pageMapKeys = PageMapPrototype.keys;
+  const pageMapValues = PageMapPrototype.values;
+  const pageMapForEach = PageMapPrototype.forEach;
 
   /**
    * Returns the raw object behind a Firefox wrapper when available.
@@ -62,6 +84,14 @@ const {
     if (!Reflect.setPrototypeOf(unwrap(target), unwrap(prototype))) {
       throw new Error("WebKeyboard could not set page prototype");
     }
+  }
+
+  /**
+   * Creates an empty page-realm Map.
+   * @returns {Map} Unwrapped page-realm Map.
+   */
+  function createPageMap() {
+    return unwrap(new PageMap());
   }
 
   /**
@@ -127,6 +157,15 @@ const {
     exportToPage,
     definePageProperty,
     setPagePrototype,
+    createPageMap,
+    pageMapSizeGetter,
+    pageMapGet,
+    pageMapHas,
+    pageMapSet,
+    pageMapEntries,
+    pageMapKeys,
+    pageMapValues,
+    pageMapForEach,
     pageTypeError,
     pagePromise,
     rejectedPagePromise,

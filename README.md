@@ -8,7 +8,7 @@ Target: **Firefox 151+**.
 
 **Keyboard Lock** is implemented, including full and per-code locks for Firefox browser shortcuts.
 
-**Keyboard Map is not implemented in v0.1.0.** Firefox does not currently expose a complete platform keyboard-layout map to WebExtension Experiment JavaScript, so  `navigator.keyboard.getLayoutMap`, `KeyboardLayoutMap`, and `layoutchange` are left unsupported.
+**Keyboard Map** is implemented with a fixed standard US-QWERTY map. It does not inspect the operating-system keyboard layout and never fires `layoutchange`.
 
 ## Install
 
@@ -34,8 +34,18 @@ partial interface Navigator {
 interface Keyboard : EventTarget {
   Promise<undefined> lock(optional sequence<DOMString> keyCodes = []);
   undefined unlock();
+  Promise<KeyboardLayoutMap> getLayoutMap();
+  attribute EventHandler onlayoutchange;
+};
+
+[Exposed=Window]
+interface KeyboardLayoutMap {
+  readonly maplike<DOMString, DOMString>;
 };
 ```
+
+`getLayoutMap()` always returns the standard US-QWERTY writing-system key map. The
+map is fixed for the lifetime of the page, so `layoutchange` is never dispatched.
 
 ## Keyboard Lock
 

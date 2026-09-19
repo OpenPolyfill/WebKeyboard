@@ -21,6 +21,7 @@ const keyboardService = (() => {
     "Digit8",
     "Digit9",
     "Equal",
+    "IntlHash",
     "IntlBackslash",
     "IntlRo",
     "IntlYen",
