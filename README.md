@@ -2,7 +2,7 @@
 
 A privileged Firefox compatibility layer for the WICG Keyboard API.
 
-Target: **Firefox 152+**.
+Target: **Firefox 151+**.
 
 ## Status
 
