@@ -1,0 +1,22 @@
+{
+  "name": "webkeyboard",
+  "version": "0.1.0",
+  "description": "A privileged compatibility layer for the WICG Keyboard API.",
+  "license": "Apache-2.0 OR MIT",
+  "author": "OpenPolyfill",
+  "type": "commonjs",
+  "scripts": {
+    "build-for-amo": "npm run build",
+    "fx-build": "npm run build",
+    "build": "web-ext build -s src -a dist --overwrite-dest"
+  },
+  "devDependencies": {
+    "web-ext": "^10.5.0"
+  },
+  "overrides": {
+    "adm-zip": "0.6.1",
+    "brace-expansion": "5.0.9",
+    "shell-quote": "1.10.0",
+    "image-size": "2.0.3"
+  }
+}
