@@ -64,7 +64,7 @@ Firefox Fullscreen API keyboardLock="browser"
 
 Firefox still considers the DOM fullscreen session natively browser-keyboard-locked because the backend keeps `keyboardLock: "browser"` armed. Browser chrome behavior tied to that native state, especially the fullscreen Escape path and related UI, cannot be fully virtualized by a content script.
 
-When Firefox exposes its internal remote-reply marker to the isolated Xray listener, the filter uses it to identify browser-shortcut round trips exactly. Otherwise it falls back to shortcut-shaped keyboard events (modifier chords, function keys, and dedicated browser/media keys), which can hide a page-defined chord that Firefox itself would not reserve.
+Firefox's internal remote-reply marker is ChromeOnly and unavailable to normal WebExtensions, so this branch identifies browser-shortcut round trips using a heuristic based on modifier chords, function keys, and dedicated browser/media keys. This can hide a page-defined chord that Firefox itself would not reserve.
 
 ## Secure contexts
 

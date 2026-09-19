@@ -12,10 +12,6 @@ const keyboardService = (() => {
     pageElementPrototype,
     "requestFullscreen",
   );
-  const replyFlagGetter = Reflect.getOwnPropertyDescriptor(
-    window.Event.prototype,
-    "isWaitingReplyFromRemoteContent",
-  )?.get;
 
   const WRITING_SYSTEM_CODES = new Set([
     "Backquote",
@@ -342,12 +338,6 @@ const keyboardService = (() => {
 
   /** Returns whether the current event is a browser-shortcut round trip. */
   function isBrowserShortcutEvent(event) {
-    if (replyFlagGetter) {
-      try {
-        return Reflect.apply(replyFlagGetter, event, []);
-      } catch {}
-    }
-
     if (MODIFIER_CODES.has(event.code)) return false;
     if (event.ctrlKey || event.metaKey || event.altKey) return true;
     if (/^F[1-9]\d*$/.test(event.code)) return true;
