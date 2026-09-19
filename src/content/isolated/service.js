@@ -41,16 +41,35 @@ const keyboardService = (() => {
 
     try {
       const source = unwrap(options);
-      if (typeof source !== "object" && typeof source !== "function") {
-        return "none";
+      if (
+        source === null ||
+        (typeof source !== "object" && typeof source !== "function")
+      ) {
+        return "invalid";
       }
 
-      const value = Reflect.get(source, "keyboardLock", source);
-      if (value === undefined) return "none";
+      let prototype = source;
+      while (prototype !== null) {
+        const descriptor = Reflect.getOwnPropertyDescriptor(
+          prototype,
+          "keyboardLock",
+        );
+        if (descriptor) {
+          if ("get" in descriptor || "set" in descriptor) {
+            return "invalid";
+          }
 
-      const mode = String(value);
-      if (mode === "none" || mode === "browser") return mode;
-      return "invalid";
+          const value = descriptor.value;
+          if (value === undefined) return "none";
+          if (typeof value !== "string") return "invalid";
+          if (value === "none" || value === "browser") return value;
+          return "invalid";
+        }
+
+        prototype = Reflect.getPrototypeOf(prototype);
+      }
+
+      return "none";
     } catch {
       return "invalid";
     }
