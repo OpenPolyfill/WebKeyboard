@@ -8,9 +8,10 @@ This branch implements Keyboard Lock on top of Firefox's public Fullscreen API i
 
 ## Status
 
-**Keyboard Lock** is implemented, including full and per-code locks for Firefox browser shortcuts.
-
-**Keyboard Map is not implemented in v0.1.0.**
+- **Keyboard Lock:**
+  - Supports all-key `lock()` and `unlock()` best effort.
+  - Selective key locks are unsupported.
+- **Keyboard Map is not implemented**
 
 ## Install
 
@@ -34,37 +35,19 @@ interface Keyboard : EventTarget {
 };
 ```
 
-## Keyboard Lock
+## Support matrix
 
-`lock()` and `unlock()` only update logical state in the isolated content script.
-
-Every DOM `requestFullscreen()` call is delegated with `keyboardLock: "browser"` so Firefox's native fullscreen keyboard routing is already armed before a later `navigator.keyboard.lock()` call. The isolated capture listener then decides which browser-shortcut events are visible to the page:
-
-- a code owned by `navigator.keyboard.lock()` is allowed through;
-- an unlocked browser shortcut is stopped before page listeners without calling `preventDefault()`, so Firefox can still run its browser action;
-- a page that explicitly requested `requestFullscreen({ keyboardLock: "browser" })` keeps Firefox's native passthrough behavior;
-- `requestFullscreen({ keyboardLock: "none" })` is internally upgraded to `"browser"` and the `none` behavior is emulated by the capture filter.
-
-This makes lock-before-fullscreen and lock-after-fullscreen use the same state machine and avoids a second Fullscreen API request when `lock()` or `unlock()` changes state.
-
-## Architecture
-
-```text
-Page Web API
-    ↕
-ISOLATED content script
-    ├─ navigator.keyboard logical state
-    ├─ requestFullscreen() wrapper
-    └─ keyboard-event capture filter
-    ↕
-Firefox Fullscreen API keyboardLock="browser"
-```
-
-## Limitations
-
-Firefox still considers the DOM fullscreen session natively browser-keyboard-locked because the backend keeps `keyboardLock: "browser"` armed. Browser chrome behavior tied to that native state, especially the fullscreen Escape path and related UI, cannot be fully virtualized by a content script.
-
-Firefox's internal remote-reply marker is ChromeOnly and unavailable to normal WebExtensions, so this branch identifies browser-shortcut round trips using a heuristic based on modifier chords, function keys, and dedicated browser/media keys. This can hide a page-defined chord that Firefox itself would not reserve.
+| `lock()` position | `lock()` input | `requestFullscreen()` | `unlock()` | Support |
+| --- | --- | --- | --- | --- |
+| Before | Empty sequence | option omitted or `keyboardLock: "none"` | Tries native `keyboardLock: "none"` | Partial |
+| Before | Empty sequence | `keyboardLock: "browser"` | Keeps native browser locking | Functional |
+| After | Empty sequence | option omitted or `keyboardLock: "none"` | `lock()` tries `"browser"`; `unlock()` tries `"none"` | Partial |
+| After | Empty sequence | `keyboardLock: "browser"` | No second request; keeps native browser locking | Functional |
+| Before | Empty sequence | Request rejects | No native change | Functional |
+| Before | Empty sequence | No fullscreen request | No native request | Functional |
+| Any | Empty sequence | Any option | Not fullscreen; no native request | Functional |
+| - | - | Any option | Passthrough; no native downgrade | Functional |
+| Any | Non-empty sequence | Any option | Not applicable | Unsupported |
 
 ## Secure contexts
 
