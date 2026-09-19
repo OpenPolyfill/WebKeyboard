@@ -35,19 +35,24 @@ const keyboardService = (() => {
     }
   }
 
-  /** Returns whether fullscreen options explicitly request browser locking. */
-  function requestsBrowserLock(options) {
-    if (options === undefined || options === null) return false;
-
-    const source = unwrap(options);
-    if (typeof source !== "object" && typeof source !== "function") {
-      return false;
-    }
+  /** Parses the caller's Fullscreen API keyboard-lock option. */
+  function parseFullscreenKeyboardLock(options) {
+    if (options === undefined || options === null) return "none";
 
     try {
-      return String(Reflect.get(source, "keyboardLock", source)) === "browser";
+      const source = unwrap(options);
+      if (typeof source !== "object" && typeof source !== "function") {
+        return "none";
+      }
+
+      const value = Reflect.get(source, "keyboardLock", source);
+      if (value === undefined) return "none";
+
+      const mode = String(value);
+      if (mode === "none" || mode === "browser") return mode;
+      return "invalid";
     } catch {
-      return false;
+      return "invalid";
     }
   }
 
@@ -79,21 +84,25 @@ const keyboardService = (() => {
    * forcing Firefox's native browser keyboard lock.
    */
   function requestFullscreen(options = undefined) {
+    const keyboardLock = parseFullscreenKeyboardLock(options);
+    if (keyboardLock === "invalid") {
+      return Reflect.apply(pageRequestFullscreen, unwrap(this), arguments);
+    }
+
     const previousLockInducedBrowser = lockInducedBrowser;
     const previousRequestObserved = fullscreenRequestObserved;
     const previousExplicitBrowser = lastFullscreenRequestExplicitBrowser;
     const generation = ++fullscreenRequestGeneration;
-    const explicitBrowser = requestsBrowserLock(options);
     let requestOptions = arguments;
 
     if (!keyboardLockArmed) {
       lockInducedBrowser = false;
     } else {
-      lockInducedBrowser = !explicitBrowser;
+      lockInducedBrowser = keyboardLock !== "browser";
       requestOptions = [makeKeyboardLockOptions(options, "browser")];
     }
     fullscreenRequestObserved = true;
-    lastFullscreenRequestExplicitBrowser = explicitBrowser;
+    lastFullscreenRequestExplicitBrowser = keyboardLock === "browser";
 
     let result;
     try {
@@ -111,7 +120,7 @@ const keyboardService = (() => {
       () => {
         if (generation === fullscreenRequestGeneration) {
           fullscreenRequestObserved = true;
-          lastFullscreenRequestExplicitBrowser = explicitBrowser;
+          lastFullscreenRequestExplicitBrowser = keyboardLock === "browser";
         }
       },
       () => {
