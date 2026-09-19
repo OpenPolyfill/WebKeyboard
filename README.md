@@ -1,25 +1,22 @@
 # WebKeyboard
 
-A privileged Firefox compatibility layer for the WICG Keyboard API.
+A Firefox compatibility layer for the WICG Keyboard API.
 
-Target: **Firefox 152+**.
+Target: **Firefox 151+**.
+
+This branch implements Keyboard Lock on top of Firefox's public Fullscreen API instead of a WebExtension Experiment backend.
 
 ## Status
 
 **Keyboard Lock** is implemented, including full and per-code locks for Firefox browser shortcuts.
 
-**Keyboard Map is not implemented in v0.1.0.** Firefox does not currently expose a complete platform keyboard-layout map to WebExtension Experiment JavaScript, so  `navigator.keyboard.getLayoutMap`, `KeyboardLayoutMap`, and `layoutchange` are left unsupported.
+**Keyboard Map is not implemented in v0.1.0.**
 
 ## Install
 
-WebExtension Experiments must be enabled before loading the addon.
+Load `src/manifest.json` as a temporary add-on from `about:debugging` → **This Firefox** → **Load Temporary Add-on**.
 
-1. Open `about:config`.
-2. Set `extensions.experiments.enabled` to `true`.
-3. Open `about:debugging` → **This Firefox** → **Load Temporary Add-on**.
-4. Select `manifest.json` from the unpacked source tree.
-
-For an unsigned persistent install on Developer Edition or Nightly, also set `xpinstall.signatures.required` to `false`.
+This branch does not use a background context or WebExtension Experiment API.
 
 ## API
 
@@ -39,28 +36,16 @@ interface Keyboard : EventTarget {
 
 ## Keyboard Lock
 
-The lock is armed by `lock()` and becomes effective while the top-level document is in DOM fullscreen.
+`lock()` and `unlock()` only update logical state in the isolated content script.
 
-```js
-await navigator.keyboard.lock(["KeyW"])
-```
+Every DOM `requestFullscreen()` call is delegated with `keyboardLock: "browser"` so Firefox's native fullscreen keyboard routing is already armed before a later `navigator.keyboard.lock()` call. The isolated capture listener then decides which browser-shortcut events are visible to the page:
 
-With the lock above:
+- a code owned by `navigator.keyboard.lock()` is allowed through;
+- an unlocked browser shortcut is stopped before page listeners without calling `preventDefault()`, so Firefox can still run its browser action;
+- a page that explicitly requested `requestFullscreen({ keyboardLock: "browser" })` keeps Firefox's native passthrough behavior;
+- `requestFullscreen({ keyboardLock: "none" })` is internally upgraded to `"browser"` and the `none` behavior is emulated by the capture filter.
 
-- `W` is delivered to the page normally.
-- `Ctrl+W` is delivered to the page and Firefox does not close the tab.
-- `Ctrl+Shift+W` is delivered to the page and the matching Firefox shortcut is suppressed.
-- `Ctrl+T` remains a normal Firefox shortcut and is not forwarded to the page as a reserved browser shortcut.
-
-Calling `lock()` with no codes locks all supported browser-reserved keyboard codes while DOM fullscreen is active.
-
-A newer `lock()` request replaces the previous request. A pending request superseded by a newer request rejects with `AbortError`.
-
-`unlock()` clears the active lock.
-
-Desktop-environment and operating-system global shortcuts remain controlled by the operating system. A compositor may still react to keys such as `Super` even when Firefox also delivers the event to the page.
-
-Firefox also retains its own fullscreen escape path. The fullscreen-exit shortcut remains reserved (`F11` on non-macOS, `Cmd+Ctrl+F` on macOS), and holding `Escape` can still exit keyboard lock/fullscreen.
+This makes lock-before-fullscreen and lock-after-fullscreen use the same state machine and avoids a second Fullscreen API request when `lock()` or `unlock()` changes state.
 
 ## Architecture
 
@@ -68,22 +53,19 @@ Firefox also retains its own fullscreen escape path. The fullscreen-exit shortcu
 Page Web API
     ↕
 ISOLATED content script
-    ↕ runtime.Port
-Background
-    ↕ WebExtension Experiment API
-Firefox chrome / keyboard routing
+    ├─ navigator.keyboard logical state
+    ├─ requestFullscreen() wrapper
+    └─ keyboard-event capture filter
+    ↕
+Firefox Fullscreen API keyboardLock="browser"
 ```
 
-The content script runs at `document_start` and owns the page-facing API, WebIDL-style argument conversion, validation, lock sequencing, and background RPC.
+## Limitations
 
-The background script owns document-level request routing and lock ownership. The top-frame control port represents the lifetime of the document; disconnecting it clears any lock still owned by that document.
+Firefox still considers the DOM fullscreen session natively browser-keyboard-locked because the backend keeps `keyboardLock: "browser"` armed. Browser chrome behavior tied to that native state, especially the fullscreen Escape path and related UI, cannot be fully virtualized by a content script.
 
-The Experiment backend observes Firefox chrome keyboard events and updates `WindowGlobalParent` keyboard-lock routing per physical `KeyboardEvent.code`. Locked codes use Firefox's content-first keyboard-lock route; unlocked codes keep Firefox's normal browser-shortcut route.
+When Firefox exposes its internal remote-reply marker to the isolated Xray listener, the filter uses it to identify browser-shortcut round trips exactly. Otherwise it falls back to shortcut-shaped keyboard events (modifier chords, function keys, and dedicated browser/media keys), which can hide a page-defined chord that Firefox itself would not reserve.
 
 ## Secure contexts
 
-The polyfill is not installed when `window.isSecureContext` is false.
-
-## Debugging
-
-Background activity is logged with `console.debug()`. Backend failures are logged with `console.error()`.
+The polyfill and Fullscreen API wrapper are installed only when `window.isSecureContext` is true.

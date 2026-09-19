@@ -2,11 +2,10 @@
   "manifest_version": 3,
   "name": "WebKeyboard",
   "version": "0.1.0",
-  "description": "Privileged WebKeyboard compatibility layer.",
+  "description": "WebKeyboard compatibility layer.",
   "browser_specific_settings": {
     "gecko": {
       "id": "@webkeyboard.openpolyfill",
-      "strict_min_version": "151.0",
       "data_collection_permissions": {
         "required": [
           "none"
@@ -16,11 +15,6 @@
     }
   },
   "permissions": [],
-  "background": {
-    "scripts": [
-      "background.js"
-    ]
-  },
   "content_scripts": [
     {
       "matches": [
@@ -29,7 +23,6 @@
       "js": [
         "content/isolated/utils/xray.js",
         "content/isolated/utils/webidl.js",
-        "content/isolated/internal/protocol.js",
         "content/isolated/service.js",
         "content/isolated/facade.js"
       ],
@@ -38,21 +31,5 @@
       "match_about_blank": true,
       "world": "ISOLATED"
     }
-  ],
-  "experiment_apis": {
-    "keyboard": {
-      "schema": "experiment/schema.json",
-      "parent": {
-        "scopes": [
-          "addon_parent"
-        ],
-        "paths": [
-          [
-            "keyboard"
-          ]
-        ],
-        "script": "experiment/api.js"
-      }
-    }
-  }
+  ]
 }

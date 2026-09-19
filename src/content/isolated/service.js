@@ -1,8 +1,21 @@
-/** Keyboard Lock state and API algorithm implementation. */
+/** Keyboard Lock state and Fullscreen API backend. */
 "use strict";
 
 const keyboardService = (() => {
   const pageDocument = unwrap(window.document);
+  const pageElementPrototype = unwrap(window.Element.prototype);
+  const pageRequestFullscreen = Reflect.get(
+    pageElementPrototype,
+    "requestFullscreen",
+  );
+  const requestFullscreenDescriptor = Reflect.getOwnPropertyDescriptor(
+    pageElementPrototype,
+    "requestFullscreen",
+  );
+  const replyFlagGetter = Reflect.getOwnPropertyDescriptor(
+    window.Event.prototype,
+    "isWaitingReplyFromRemoteContent",
+  )?.get;
 
   const WRITING_SYSTEM_CODES = new Set([
     "Backquote",
@@ -171,15 +184,49 @@ const keyboardService = (() => {
     "Unidentified",
   ]);
 
-  let mutationTail = Promise.resolve();
-  let pendingLock = null;
+  const DEDICATED_BROWSER_CODES = new Set([
+    "Escape",
+    "BrowserBack",
+    "BrowserFavorites",
+    "BrowserForward",
+    "BrowserHome",
+    "BrowserRefresh",
+    "BrowserSearch",
+    "BrowserStop",
+    "Eject",
+    "LaunchApp1",
+    "LaunchApp2",
+    "LaunchMail",
+    "MediaPlayPause",
+    "MediaSelect",
+    "MediaStop",
+    "MediaTrackNext",
+    "MediaTrackPrevious",
+    "Power",
+    "Sleep",
+    "AudioVolumeDown",
+    "AudioVolumeMute",
+    "AudioVolumeUp",
+    "WakeUp",
+  ]);
 
-  /**
-   * Creates an API DOMException.
-   * @param {string} name DOMException name.
-   * @param {string} message Error message.
-   * @returns {DOMException} Created exception.
-   */
+  const MODIFIER_CODES = new Set([
+    "AltLeft",
+    "AltRight",
+    "ControlLeft",
+    "ControlRight",
+    "MetaLeft",
+    "MetaRight",
+    "ShiftLeft",
+    "ShiftRight",
+  ]);
+
+  let lockState = null;
+  let pageFullscreenKeyboardLock = "none";
+  let fullscreenRequestGeneration = 0;
+  const suppressedCodes = new Set();
+
+  /** Creates an API DOMException. */
   function apiError(name, message) {
     return new DOMException(message, name);
   }
@@ -221,65 +268,144 @@ const keyboardService = (() => {
     }
   }
 
-  /** Serializes lock-state mutations. */
-  function queueMutation(task) {
-    const run = mutationTail.then(task);
-    mutationTail = run.catch(() => {});
-    return run;
+  /** Reads the caller's Fullscreen API keyboard-lock request. */
+  function readFullscreenKeyboardLock(options) {
+    if (options === undefined || options === null) return "none";
+
+    const source = unwrap(options);
+    if (typeof source !== "object" && typeof source !== "function") {
+      return null;
+    }
+
+    const value = Reflect.get(source, "keyboardLock", source);
+    if (value === undefined) return "none";
+
+    const mode = String(value);
+    if (mode !== "none" && mode !== "browser") return null;
+    return mode;
   }
 
-  /** Rejects the current pending lock request as superseded. */
-  function abortPendingLock() {
-    if (!pendingLock) return;
+  /** Creates page-realm fullscreen options that force browser keyboard lock. */
+  function makeBrowserLockOptions(options) {
+    const forwarded = unwrap(new window.Object());
+    const source = unwrap(options);
 
-    pendingLock.superseded = true;
-    pendingLock.reject(
-      apiError(
-        "AbortError",
-        "Keyboard lock request was superseded by a newer request",
-      ),
-    );
-    pendingLock = null;
+    if (
+      source !== null &&
+      source !== undefined &&
+      (typeof source === "object" || typeof source === "function")
+    ) {
+      setPagePrototype(forwarded, source);
+    }
+
+    definePageProperty(forwarded, "keyboardLock", {
+      value: "browser",
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+
+    return forwarded;
   }
 
-  /**
-   * Handles a Keyboard Lock request.
-   * @param {string[]} codes Converted physical key codes.
-   * @returns {Promise<void>} Lock completion promise.
-   */
+  /** Implements the page-visible requestFullscreen() wrapper. */
+  function requestFullscreen(options = undefined) {
+    const requestedMode = readFullscreenKeyboardLock(options);
+    if (requestedMode === null) {
+      return Reflect.apply(pageRequestFullscreen, unwrap(this), arguments);
+    }
+
+    const previousMode = pageFullscreenKeyboardLock;
+    const generation = ++fullscreenRequestGeneration;
+    pageFullscreenKeyboardLock = requestedMode;
+
+    let result;
+    try {
+      result = Reflect.apply(pageRequestFullscreen, unwrap(this), [
+        makeBrowserLockOptions(options),
+      ]);
+    } catch (error) {
+      if (generation === fullscreenRequestGeneration) {
+        pageFullscreenKeyboardLock = previousMode;
+      }
+      throw error;
+    }
+
+    Promise.resolve(result).catch(() => {
+      if (generation === fullscreenRequestGeneration) {
+        pageFullscreenKeyboardLock = previousMode;
+      }
+    });
+
+    return result;
+  }
+
+  /** Returns whether the current event is a browser-shortcut round trip. */
+  function isBrowserShortcutEvent(event) {
+    if (replyFlagGetter) {
+      try {
+        return Reflect.apply(replyFlagGetter, event, []);
+      } catch {}
+    }
+
+    if (MODIFIER_CODES.has(event.code)) return false;
+    if (event.ctrlKey || event.metaKey || event.altKey) return true;
+    if (/^F[1-9]\d*$/.test(event.code)) return true;
+    return DEDICATED_BROWSER_CODES.has(event.code);
+  }
+
+  /** Returns whether the physical code is owned by Keyboard Lock. */
+  function isLocked(code) {
+    if (!lockState) return false;
+    return lockState.all || lockState.codes.has(code);
+  }
+
+  /** Filters browser-reserved events according to the logical lock state. */
+  function onKeyEvent(event) {
+    if (!pageDocument.fullscreenElement) return;
+
+    if (event.type !== "keydown" && suppressedCodes.has(event.code)) {
+      event.stopImmediatePropagation();
+      if (event.type === "keyup") suppressedCodes.delete(event.code);
+      return;
+    }
+
+    if (!isBrowserShortcutEvent(event)) return;
+    if (pageFullscreenKeyboardLock === "browser") return;
+    if (isLocked(event.code)) return;
+
+    if (event.type === "keydown") suppressedCodes.add(event.code);
+    event.stopImmediatePropagation();
+
+    if (event.type === "keydown" && event.code === "Escape" && !lockState) {
+      pageDocument.exitFullscreen().catch(() => {});
+    }
+  }
+
+  /** Resets per-fullscreen routing state after leaving DOM fullscreen. */
+  function onFullscreenChange() {
+    if (pageDocument.fullscreenElement) return;
+
+    ++fullscreenRequestGeneration;
+    pageFullscreenKeyboardLock = "none";
+    suppressedCodes.clear();
+  }
+
+  /** Handles a Keyboard Lock request. */
   function lock(codes) {
     assertActiveTopLevel();
-    abortPendingLock();
 
     try {
       codes = validateCodes(codes);
     } catch (error) {
-      return queueMutation(async () => {
-        try {
-          await request("unlock");
-        } finally {
-          throw error;
-        }
-      });
+      lockState = null;
+      throw error;
     }
 
-    return new Promise((resolve, reject) => {
-      const entry = { reject, superseded: false };
-      pendingLock = entry;
-
-      queueMutation(async () => {
-        if (entry.superseded) return;
-
-        try {
-          await request("lock", codes);
-          if (!entry.superseded) resolve(undefined);
-        } catch (error) {
-          if (!entry.superseded) reject(error);
-        } finally {
-          if (pendingLock === entry) pendingLock = null;
-        }
-      });
-    });
+    lockState = {
+      all: codes.length === 0,
+      codes: new Set(codes),
+    };
   }
 
   /** Handles Keyboard.unlock() when the context is supported. */
@@ -290,7 +416,22 @@ const keyboardService = (() => {
       return;
     }
 
-    queueMutation(() => request("unlock")).catch(() => {});
+    lockState = null;
+  }
+
+  if (window.isSecureContext) {
+    const pageRequestFullscreenWrapper = exportToPage(requestFullscreen);
+    definePageProperty(pageElementPrototype, "requestFullscreen", {
+      value: pageRequestFullscreenWrapper,
+      writable: requestFullscreenDescriptor.writable,
+      enumerable: requestFullscreenDescriptor.enumerable,
+      configurable: requestFullscreenDescriptor.configurable,
+    });
+
+    for (const type of ["keydown", "keypress", "keyup"]) {
+      window.addEventListener(type, onKeyEvent, true);
+    }
+    window.addEventListener("fullscreenchange", onFullscreenChange, true);
   }
 
   return { lock, unlock };
