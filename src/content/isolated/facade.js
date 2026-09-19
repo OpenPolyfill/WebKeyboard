@@ -1,11 +1,12 @@
 /** WebKeyboard WebIDL facade. */
 "use strict";
 
-if (window.isSecureContext) {
+{
   const PageObject = window.Object;
   const PageEventTarget = window.EventTarget;
   const PageNavigator = window.Navigator;
   const pageWindow = window.wrappedJSObject;
+  const pageDocument = unwrap(window.document);
   const pageEventTargetPrototype = PageEventTarget.prototype;
   const pageAddEventListener = pageEventTargetPrototype.addEventListener;
   const pageRemoveEventListener =
@@ -22,6 +23,11 @@ if (window.isSecureContext) {
 
   const STANDARD_US_LAYOUT = Object.freeze([
     ["Backquote", "`"],
+    ["Backslash", "\\"],
+    ["BracketLeft", "["],
+    ["BracketRight", "]"],
+    ["Comma", ","],
+    ["Digit0", "0"],
     ["Digit1", "1"],
     ["Digit2", "2"],
     ["Digit3", "3"],
@@ -31,42 +37,37 @@ if (window.isSecureContext) {
     ["Digit7", "7"],
     ["Digit8", "8"],
     ["Digit9", "9"],
-    ["Digit0", "0"],
-    ["Minus", "-"],
     ["Equal", "="],
-    ["KeyQ", "q"],
-    ["KeyW", "w"],
-    ["KeyE", "e"],
-    ["KeyR", "r"],
-    ["KeyT", "t"],
-    ["KeyY", "y"],
-    ["KeyU", "u"],
-    ["KeyI", "i"],
-    ["KeyO", "o"],
-    ["KeyP", "p"],
-    ["BracketLeft", "["],
-    ["BracketRight", "]"],
-    ["Backslash", "\\"],
     ["KeyA", "a"],
-    ["KeyS", "s"],
+    ["KeyB", "b"],
+    ["KeyC", "c"],
     ["KeyD", "d"],
+    ["KeyE", "e"],
     ["KeyF", "f"],
     ["KeyG", "g"],
     ["KeyH", "h"],
+    ["KeyI", "i"],
     ["KeyJ", "j"],
     ["KeyK", "k"],
     ["KeyL", "l"],
-    ["Semicolon", ";"],
-    ["Quote", "'"],
-    ["KeyZ", "z"],
-    ["KeyX", "x"],
-    ["KeyC", "c"],
-    ["KeyV", "v"],
-    ["KeyB", "b"],
-    ["KeyN", "n"],
     ["KeyM", "m"],
-    ["Comma", ","],
+    ["KeyN", "n"],
+    ["KeyO", "o"],
+    ["KeyP", "p"],
+    ["KeyQ", "q"],
+    ["KeyR", "r"],
+    ["KeyS", "s"],
+    ["KeyT", "t"],
+    ["KeyU", "u"],
+    ["KeyV", "v"],
+    ["KeyW", "w"],
+    ["KeyX", "x"],
+    ["KeyY", "y"],
+    ["KeyZ", "z"],
+    ["Minus", "-"],
     ["Period", "."],
+    ["Quote", "'"],
+    ["Semicolon", ";"],
     ["Slash", "/"],
   ]);
 
@@ -153,28 +154,45 @@ if (window.isSecureContext) {
     return Reflect.apply(pageMapForEach, backing, [callbackWrapper]);
   }
 
-  const pageLayoutMapMethods = [
-    ["get", exportToPage(getLayoutMapValue)],
-    ["has", exportToPage(hasLayoutMapKey)],
-    ["entries", exportToPage(getLayoutMapEntries)],
-    ["keys", exportToPage(getLayoutMapKeys)],
-    ["values", exportToPage(getLayoutMapValues)],
-    ["forEach", exportToPage(forEachLayoutMapEntry)],
-  ];
-  for (const [name, method] of pageLayoutMapMethods) {
-    definePageProperty(KeyboardLayoutMapPrototype, name, {
-      value: method,
-      writable: true,
+  function setPageFunctionMetadata(method, name, length) {
+    definePageProperty(method, "name", {
+      value: name,
+      writable: false,
+      enumerable: false,
+      configurable: true,
+    });
+    definePageProperty(method, "length", {
+      value: length,
+      writable: false,
       enumerable: false,
       configurable: true,
     });
   }
 
+  const pageLayoutMapMethods = [
+    ["get", exportToPage(getLayoutMapValue), 1],
+    ["has", exportToPage(hasLayoutMapKey), 1],
+    ["entries", exportToPage(getLayoutMapEntries), 0],
+    ["keys", exportToPage(getLayoutMapKeys), 0],
+    ["values", exportToPage(getLayoutMapValues), 0],
+    ["forEach", exportToPage(forEachLayoutMapEntry), 1],
+  ];
+  for (const [name, method, length] of pageLayoutMapMethods) {
+    setPageFunctionMetadata(method, name, length);
+    definePageProperty(KeyboardLayoutMapPrototype, name, {
+      value: method,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+  }
+
   const pageLayoutMapSizeGetter = exportToPage(getLayoutMapSize);
+  setPageFunctionMetadata(pageLayoutMapSizeGetter, "get size", 0);
   definePageProperty(KeyboardLayoutMapPrototype, "size", {
     get: pageLayoutMapSizeGetter,
     set: undefined,
-    enumerable: false,
+    enumerable: true,
     configurable: true,
   });
 
@@ -208,6 +226,42 @@ if (window.isSecureContext) {
     configurable: true,
   });
 
+  /**
+   * Checks the Permissions Policy gate for Keyboard Map.
+   *
+   * Firefox currently does not expose document.permissionsPolicy for this
+   * polyfilled feature. In that case, the default "self" allowlist can be
+   * reproduced for top-level and same-origin documents. An explicit
+   * cross-origin iframe allow="keyboard-map" cannot be observed from the
+   * child in that environment, so the conservative fallback rejects it.
+   */
+  function isKeyboardMapAllowed() {
+    let policy = null;
+    try {
+      policy = pageDocument.permissionsPolicy ?? null;
+    } catch (_) {}
+
+    if (policy && typeof policy.allowsFeature === "function") {
+      try {
+        return !!Reflect.apply(policy.allowsFeature, policy, ["keyboard-map"]);
+      } catch (_) {}
+    }
+
+    try {
+      if (window.top === window) return true;
+
+      const currentOrigin = pageDocument.location?.origin;
+      const topDocument = unwrap(window.top.document);
+      return (
+        typeof currentOrigin === "string" &&
+        currentOrigin === topDocument.location?.origin
+      );
+    } catch (_) {
+      return false;
+    }
+  }
+
+  if (window.isSecureContext) {
   /** Implements the non-constructible Keyboard interface constructor. */
   function Keyboard() {
     illegalConstructor();
@@ -298,7 +352,39 @@ if (window.isSecureContext) {
       return Reflect.apply(resolved.method, resolved.receiver, arguments);
     }
 
+    if (!isKeyboardMapAllowed()) {
+      return rejectedPagePromise(
+        new DOMException(
+          "Keyboard Map is disabled by Permissions Policy",
+          "SecurityError",
+        ),
+      );
+    }
+
     return pagePromise(createKeyboardLayoutMap);
+  }
+
+  /** Applies EventHandler's LegacyTreatNonObjectAsNull conversion. */
+  function normalizeEventHandlerValue(value) {
+    const handler = unwrap(value);
+    if (
+      handler === null ||
+      (typeof handler !== "object" && typeof handler !== "function")
+    ) {
+      return null;
+    }
+    return handler;
+  }
+
+  /** Runs the current layoutchange EventHandler value. */
+  function runLayoutChangeHandler(receiver, event) {
+    const handler = layoutChangeHandlers.get(receiver);
+    if (typeof handler !== "function") return;
+
+    const result = Reflect.apply(handler, receiver, [event]);
+    if (result === false) {
+      Reflect.apply(event.preventDefault, event, []);
+    }
   }
 
   /** Implements Keyboard.onlayoutchange. */
@@ -310,28 +396,27 @@ if (window.isSecureContext) {
   /** Implements the Keyboard.onlayoutchange EventHandler setter. */
   function setOnLayoutChange(value) {
     const receiver = requireBrand(this, keyboardBrand);
-    if (value !== null && value !== undefined && typeof value !== "function") {
-      throw pageTypeError("Keyboard.onlayoutchange is not callable");
-    }
+    const handler = normalizeEventHandlerValue(value);
 
-    const previousListener = layoutChangeListeners.get(receiver);
-    if (previousListener) {
-      Reflect.apply(pageRemoveEventListener, receiver, [
-        "layoutchange",
-        previousListener,
-      ]);
-      layoutChangeListeners.delete(receiver);
-    }
-
-    if (value === null || value === undefined) {
+    if (handler === null) {
       layoutChangeHandlers.delete(receiver);
+      const listener = layoutChangeListeners.get(receiver);
+      if (listener) {
+        Reflect.apply(pageRemoveEventListener, receiver, [
+          "layoutchange",
+          listener,
+        ]);
+        layoutChangeListeners.delete(receiver);
+      }
       return;
     }
 
+    layoutChangeHandlers.set(receiver, handler);
+    if (layoutChangeListeners.has(receiver)) return;
+
     const listener = exportToPage((event) =>
-      Reflect.apply(value, receiver, [event]),
+      runLayoutChangeHandler(receiver, event),
     );
-    layoutChangeHandlers.set(receiver, value);
     layoutChangeListeners.set(receiver, listener);
     Reflect.apply(pageAddEventListener, receiver, ["layoutchange", listener]);
   }
@@ -409,4 +494,5 @@ if (window.isSecureContext) {
     enumerable: true,
     configurable: true,
   });
+}
 }
