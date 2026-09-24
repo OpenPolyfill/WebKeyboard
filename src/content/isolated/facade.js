@@ -6,7 +6,6 @@
   const PageEventTarget = window.EventTarget;
   const PageNavigator = window.Navigator;
   const pageWindow = window.wrappedJSObject;
-  const pageDocument = unwrap(window.document);
   const pageEventTargetPrototype = PageEventTarget.prototype;
   const pageAddEventListener = pageEventTargetPrototype.addEventListener;
   const pageRemoveEventListener =
@@ -226,40 +225,6 @@
     configurable: true,
   });
 
-  /**
-   * Checks the Permissions Policy gate for Keyboard Map.
-   *
-   * Firefox currently does not expose document.permissionsPolicy for this
-   * polyfilled feature. In that case, the default "self" allowlist can be
-   * reproduced for top-level and same-origin documents. An explicit
-   * cross-origin iframe allow="keyboard-map" cannot be observed from the
-   * child in that environment, so the conservative fallback rejects it.
-   */
-  function isKeyboardMapAllowed() {
-    let policy = null;
-    try {
-      policy = pageDocument.permissionsPolicy ?? null;
-    } catch (_) {}
-
-    if (policy && typeof policy.allowsFeature === "function") {
-      try {
-        return !!Reflect.apply(policy.allowsFeature, policy, ["keyboard-map"]);
-      } catch (_) {}
-    }
-
-    try {
-      if (window.top === window) return true;
-
-      const currentOrigin = pageDocument.location?.origin;
-      const topDocument = unwrap(window.top.document);
-      return (
-        typeof currentOrigin === "string" &&
-        currentOrigin === topDocument.location?.origin
-      );
-    } catch (_) {
-      return false;
-    }
-  }
 
   if (window.isSecureContext) {
   /** Implements the non-constructible Keyboard interface constructor. */
@@ -352,29 +317,18 @@
       return Reflect.apply(resolved.method, resolved.receiver, arguments);
     }
 
-    if (!isKeyboardMapAllowed()) {
-      return rejectedPagePromise(
-        new DOMException(
+    return pagePromise(async () => {
+      if (!(await keyboardPolicy.allowsKeyboardMap())) {
+        throw new DOMException(
           "Keyboard Map is disabled by Permissions Policy",
           "SecurityError",
-        ),
-      );
-    }
+        );
+      }
 
-    return pagePromise(createKeyboardLayoutMap);
+      return createKeyboardLayoutMap();
+    });
   }
 
-  /** Applies EventHandler's LegacyTreatNonObjectAsNull conversion. */
-  function normalizeEventHandlerValue(value) {
-    const handler = unwrap(value);
-    if (
-      handler === null ||
-      (typeof handler !== "object" && typeof handler !== "function")
-    ) {
-      return null;
-    }
-    return handler;
-  }
 
   /** Runs the current layoutchange EventHandler value. */
   function runLayoutChangeHandler(receiver, event) {

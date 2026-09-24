@@ -14,7 +14,7 @@ const request = (() => {
     return new DOMException(message, "InvalidStateError");
   }
 
-  /** Connects the background port on first use. */
+  /** Connects the background control port. */
   function connect() {
     if (port || disconnected) return;
 
@@ -32,9 +32,7 @@ const request = (() => {
 
       const entry = pending.get(message.id);
       if (!entry) return;
-
       pending.delete(message.id);
-
       if (message.error) {
         const error = new Error(
           message.error.message || "WebKeyboard background error",
@@ -48,20 +46,16 @@ const request = (() => {
 
     port.onDisconnect.addListener(() => {
       if (disconnected) return;
-
       disconnected = true;
       port = null;
-
       const error = stateError("WebKeyboard background connection closed");
       for (const entry of pending.values()) entry.reject(error);
       pending.clear();
     });
   }
 
-  /** Sends one request through the background port. */
-  function request(operation, payload = null) {
+  return (operation, payload = null) => {
     connect();
-
     if (disconnected || !port) {
       return Promise.reject(
         stateError("WebKeyboard background connection unavailable"),
@@ -71,7 +65,6 @@ const request = (() => {
     return new Promise((resolve, reject) => {
       const id = ++nextId;
       pending.set(id, { resolve, reject });
-
       try {
         port.postMessage({ type: "request", id, operation, payload });
       } catch (error) {
@@ -81,7 +74,5 @@ const request = (() => {
         reject(error);
       }
     });
-  }
-
-  return request;
+  };
 })();

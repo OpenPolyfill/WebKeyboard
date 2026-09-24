@@ -15,9 +15,16 @@
       }
     }
   },
-  "permissions": [],
+  "permissions": [
+    "webRequest"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
   "background": {
     "scripts": [
+      "policy-sources.js",
+      "policy.js",
       "background.js"
     ]
   },
@@ -29,6 +36,9 @@
       "js": [
         "content/isolated/utils/xray.js",
         "content/isolated/utils/webidl.js",
+        "policy-sources.js",
+        "content/isolated/internal/policy.js",
+        "content/isolated/internal/permissions.js",
         "content/isolated/internal/protocol.js",
         "content/isolated/service.js",
         "content/isolated/facade.js"

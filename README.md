@@ -47,6 +47,10 @@ interface KeyboardLayoutMap {
 `getLayoutMap()` always returns the standard US-QWERTY writing-system key map. The
 map is fixed for the lifetime of the page, so `layoutchange` is never dispatched.
 
+`navigator.permissions.query({ name: "keyboard-map" })` is also supported and
+returns a page-realm `PermissionStatus` with `state` set to `"granted"` or
+`"denied"` according to the same Permissions Policy decision.
+
 ## Keyboard Lock
 
 The lock is armed by `lock()` and becomes effective while the top-level document is in DOM fullscreen.
@@ -87,6 +91,12 @@ Firefox chrome / keyboard routing
 The content script runs at `document_start` and owns the page-facing API, WebIDL-style argument conversion, validation, lock sequencing, and background RPC.
 
 The background script owns document-level request routing and lock ownership. The top-frame control port represents the lifetime of the document; disconnecting it clears any lock still owned by that document.
+
+Keyboard Map Permissions Policy is enforced separately. A read-only
+`webRequest.onBeforeRequest`/`onHeadersReceived` observer tracks navigation
+lifetimes and replaces response policy on redirects. An eager policy port in
+every isolated frame queries the exact parent frame's `<iframe allow>`
+delegation through Firefox Xrays before `getLayoutMap()` resolves.
 
 The Experiment backend observes Firefox chrome keyboard events and updates `WindowGlobalParent` keyboard-lock routing per physical `KeyboardEvent.code`. Locked codes use Firefox's content-first keyboard-lock route; unlocked codes keep Firefox's normal browser-shortcut route.
 
