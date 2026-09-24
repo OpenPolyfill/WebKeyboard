@@ -9,7 +9,7 @@
     "build-for-amo": "npm run build",
     "fx-build": "npm run build",
     "build": "web-ext build -s src -a dist --overwrite-dest",
-    "test": "npm run test:policy && npm run test:permissions",
+    "test": "npm run test:policy && npm run test:permissions && node tests/policy-restart-fixture.js",
     "test:policy": "node tests/policy-fixture.js",
     "test:permissions": "node tests/permissions-fixture.js"
   },

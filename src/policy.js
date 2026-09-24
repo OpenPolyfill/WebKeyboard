@@ -27,11 +27,55 @@ const UNKNOWN_POLICY = Object.freeze({
   },
 });
 const POLICY_PORT_NAME = "webkeyboard-policy";
+const POLICY_STORAGE_PREFIX = "webkeyboard-policy:";
 let nextEndpointId = 0;
 let nextDelegationId = 0;
 
 function frameKey(tabId, frameId) {
   return `${tabId}:${frameId}`;
+}
+
+function policyStorageKey(tabId, frameId) {
+  return `${POLICY_STORAGE_PREFIX}${frameKey(tabId, frameId)}`;
+}
+
+function policyStorageArea() {
+  return browser.storage?.session || null;
+}
+
+function persistNavigationPolicy(navigation) {
+  const storage = policyStorageArea();
+  if (!storage) return Promise.resolve();
+  const key = policyStorageKey(navigation.tabId, navigation.frameId);
+  return storage.set({
+    [key]: {
+      documentId: navigation.documentId,
+      parentFrameId: navigation.parentFrameId,
+      responseUrl: navigation.responseUrl,
+      responseHeaders: navigation.policyHeaders,
+    },
+  }).catch(() => {});
+}
+
+async function readPersistedNavigationPolicy(endpoint) {
+  const storage = policyStorageArea();
+  if (!storage) return null;
+  const key = policyStorageKey(endpoint.tabId, endpoint.frameId);
+  try {
+    const stored = await storage.get(key);
+    return stored?.[key] || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function setEndpointPolicy(endpoint, parentFrameId, responseUrl, responseHeaders) {
+  permissionsPolicy.set(endpoint.id, {
+    origin: endpoint.origin,
+    parentFrameId,
+    declared: parseKeyboardMapPermissionsPolicy(responseHeaders, responseUrl),
+    responseLess: false,
+  });
 }
 
 function stripFragment(url) {
@@ -224,6 +268,9 @@ function onBeforeRequest(details) {
     responseUrl: null,
     declaredPolicy: ALLOW_ALL,
     observedResponse: false,
+    documentId: null,
+    policyHeaders: [],
+    persistence: Promise.resolve(),
   });
 }
 
@@ -233,11 +280,19 @@ function onHeadersReceived(details) {
   );
   if (!navigation || navigation.requestId !== details.requestId) return;
   navigation.responseUrl = details.url || navigation.url;
+  navigation.documentId =
+    typeof details.documentId === "string" && details.documentId
+      ? details.documentId
+      : null;
+  navigation.policyHeaders = (details.responseHeaders || []).filter((header) =>
+    header?.name?.toLowerCase() === "permissions-policy" &&
+    typeof header.value === "string");
   navigation.declaredPolicy = parseKeyboardMapPermissionsPolicy(
-    details.responseHeaders || [],
+    navigation.policyHeaders,
     navigation.responseUrl,
   );
   navigation.observedResponse = true;
+  navigation.persistence = persistNavigationPolicy(navigation);
 }
 
 function endpointDocumentIsLive(endpoint) {
@@ -305,7 +360,7 @@ function registerFrameEndpoint(port) {
   return endpoint;
 }
 
-function bindPendingNavigation(endpoint) {
+async function bindPendingNavigation(endpoint) {
   const navigation = pendingNavigations.get(
     navigationKey(endpoint.tabId, endpoint.frameId),
   );
@@ -319,25 +374,59 @@ function bindPendingNavigation(endpoint) {
     return true;
   }
 
-  if (!navigation || !navigation.observedResponse) {
-    permissionsPolicy.set(endpoint.id, {
-      origin: endpoint.origin,
-      parentFrameId: null,
-      declared: UNKNOWN_POLICY,
-      responseLess: false,
-    });
-    return false;
+  if (navigation?.observedResponse) {
+    const matchingUrl = navigation.responseUrl &&
+      sameUrlModuloFragment(navigation.responseUrl, endpoint.url);
+    const matchingDocument = !navigation.documentId ||
+      !endpoint.documentId ||
+      navigation.documentId === endpoint.documentId;
+    if (!matchingUrl || !matchingDocument) {
+      permissionsPolicy.set(endpoint.id, {
+        origin: endpoint.origin,
+        parentFrameId: null,
+        declared: UNKNOWN_POLICY,
+        responseLess: false,
+      });
+      return false;
+    }
+
+    setEndpointPolicy(
+      endpoint,
+      navigation.parentFrameId,
+      navigation.responseUrl,
+      navigation.policyHeaders,
+    );
+    await navigation.persistence;
+    return endpointDocumentIsLive(endpoint);
   }
 
-  const matchingUrl = navigation.responseUrl &&
-    sameUrlModuloFragment(navigation.responseUrl, endpoint.url);
   permissionsPolicy.set(endpoint.id, {
     origin: endpoint.origin,
-    parentFrameId: matchingUrl ? navigation.parentFrameId : null,
-    declared: matchingUrl ? navigation.declaredPolicy : UNKNOWN_POLICY,
+    parentFrameId: null,
+    declared: UNKNOWN_POLICY,
     responseLess: false,
   });
-  return matchingUrl;
+
+  const stored = await readPersistedNavigationPolicy(endpoint);
+  if (!endpointDocumentIsLive(endpoint) || !stored) return false;
+  if (!sameUrlModuloFragment(stored.responseUrl, endpoint.url)) return false;
+  if (
+    stored.documentId &&
+    endpoint.documentId &&
+    stored.documentId !== endpoint.documentId
+  ) {
+    return false;
+  }
+  if (normalizeOrigin(stored.responseUrl) !== endpoint.origin) return false;
+  if (!Number.isInteger(stored.parentFrameId)) return false;
+
+  setEndpointPolicy(
+    endpoint,
+    stored.parentFrameId,
+    stored.responseUrl,
+    Array.isArray(stored.responseHeaders) ? stored.responseHeaders : [],
+  );
+  return true;
 }
 
 function parentEndpointFor(child) {
@@ -424,6 +513,11 @@ async function ensureFrameDelegations(endpoint) {
 }
 
 async function getKeyboardMapPolicy(endpoint) {
+  try {
+    await endpoint.policyReady;
+  } catch (_) {
+    return "denied";
+  }
   if (!endpointDocumentIsLive(endpoint)) return "denied";
   if (!headerAllowsEndpoint(endpoint)) return "denied";
   if (endpoint.frameId !== 0 && !(await ensureFrameDelegations(endpoint))) {
@@ -465,7 +559,7 @@ function connectPolicyPort(port) {
     } catch (_) {}
     return;
   }
-  bindPendingNavigation(endpoint);
+  endpoint.policyReady = bindPendingNavigation(endpoint);
   port.onMessage.addListener((message) => {
     handlePolicyPortMessage(endpoint, message);
   });
