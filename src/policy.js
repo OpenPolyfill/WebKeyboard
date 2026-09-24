@@ -84,7 +84,12 @@ function readStructuredString(value, index) {
     } else if (character === "\\") {
       escaped = true;
     } else if (character === '"') {
-      return { value: result, quoted: true, next: cursor + 1 };
+      return {
+        kind: "string",
+        value: result,
+        quoted: true,
+        next: cursor + 1,
+      };
     } else {
       result += character;
     }
@@ -98,7 +103,8 @@ function readStructuredToken(value, index, stop) {
   if (start === index) return null;
   const token = value.slice(start, index);
   if (!/^[a-zA-Z0-9*._:+?/-]+$/.test(token)) return null;
-  return { value: token, quoted: false, next: index };
+  const kind = /^-?\d+(?:\.\d+)?$/.test(token) ? "number" : "token";
+  return { kind, value: token, quoted: false, next: index };
 }
 
 function skipStructuredSpace(value, index) {
@@ -134,7 +140,7 @@ function skipStructuredParameters(value, index) {
     const key = readStructuredToken(value, index, /[ \t=,;]/);
     if (!key) return null;
     index = skipStructuredSpace(value, key.next);
-    if (value[index] !== "=") return null;
+    if (value[index] !== "=") continue;
     index = skipStructuredSpace(value, index + 1);
     const parameter = readStructuredValue(value, index);
     if (!parameter) return null;
@@ -152,12 +158,14 @@ function parseStructuredFieldDictionary(value) {
     const key = readStructuredToken(value, index, /[ \t=,;]/);
     if (!key || !/^[a-z][a-z0-9_.*-]*$/.test(key.value)) return null;
     index = key.next;
-    if (value[index] !== "=") return null;
-    index = skipStructuredSpace(value, index + 1);
 
-    const member = readStructuredValue(value, index);
-    if (!member) return null;
-    index = member.next;
+    let member = { kind: "boolean", value: true };
+    if (value[index] === "=") {
+      index = skipStructuredSpace(value, index + 1);
+      member = readStructuredValue(value, index);
+      if (!member) return null;
+      index = member.next;
+    }
     index = skipStructuredParameters(value, index);
     if (index === null) return null;
     dictionary.set(key.value, member);
@@ -171,16 +179,18 @@ function parseStructuredFieldDictionary(value) {
 }
 
 function keyboardMapMemberToAllowlist(member, responseUrl) {
+  if (member.kind === "boolean" || member.kind === "number") return ALLOW_ALL;
   const items = member.kind === "inner" ? member.items : [member];
   if (items.length === 0) return DENY_ALL;
   const selfOrigin = normalizeOrigin(responseUrl) || "null";
   const sources = [];
   for (const item of items) {
+    if (item.kind === "number" || item.kind === "boolean") continue;
     const source = webKeyboardSources.parse(item.value, item.quoted);
     if (source) sources.push(source);
   }
   if (sources.some((source) => source.kind === "all")) return ALLOW_ALL;
-  if (sources.length === 0) return DENY_ALL;
+  if (sources.length === 0) return ALLOW_ALL;
   return allowlistFromStructure({ kind: "sources", sources }, selfOrigin);
 }
 
@@ -348,11 +358,18 @@ function headerAllowsEndpoint(endpoint) {
   while (current) {
     if (!endpointDocumentIsLive(current) || visited.has(current.id)) return false;
     visited.add(current.id);
+
     const entry = permissionsPolicy.get(current.id);
     if (!entry || entry.declared === UNKNOWN_POLICY) return false;
-    if (!entry.declared.allows(endpoint.origin)) return false;
+    if (!entry.declared.allows(current.origin)) return false;
     if (current.frameId === 0) return true;
-    current = parentEndpointFor(current);
+
+    const parent = parentEndpointFor(current);
+    if (!parent) return false;
+    const parentEntry = permissionsPolicy.get(parent.id);
+    if (!parentEntry || parentEntry.declared === UNKNOWN_POLICY) return false;
+    if (!parentEntry.declared.allows(current.origin)) return false;
+    current = parent;
   }
   return false;
 }
@@ -396,12 +413,9 @@ async function ensureFrameDelegations(endpoint) {
   while (child && child.frameId !== 0) {
     if (!endpointDocumentIsLive(child) || visited.has(child.id)) return false;
     visited.add(child.id);
-    let delegated = frameDelegations.get(child.id);
-    if (delegated === undefined) {
-      delegated = await queryFrameDelegation(child);
-      if (!endpointDocumentIsLive(child)) return false;
-      frameDelegations.set(child.id, delegated);
-    }
+    const delegated = await queryFrameDelegation(child);
+    if (!endpointDocumentIsLive(child)) return false;
+    frameDelegations.set(child.id, delegated);
     if (!delegated) return false;
     child = parentEndpointFor(child);
     if (!child) return false;

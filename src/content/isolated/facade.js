@@ -167,6 +167,16 @@
       configurable: true,
     });
   }
+  function normalizeEventHandlerValue(value) {
+    const handler = unwrap(value);
+    if (
+      handler === null ||
+      (typeof handler !== "object" && typeof handler !== "function")
+    ) {
+      return null;
+    }
+    return handler;
+  }
 
   const pageLayoutMapMethods = [
     ["get", exportToPage(getLayoutMapValue), 1],

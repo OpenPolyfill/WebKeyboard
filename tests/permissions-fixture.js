@@ -4,6 +4,10 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 
+const webidlSource = fs.readFileSync(
+  'src/content/isolated/utils/webidl.js',
+  'utf8',
+);
 const permissionsSource = fs.readFileSync(
   'src/content/isolated/internal/permissions.js',
   'utf8',
@@ -14,24 +18,26 @@ const pageMapSizeGetter = Reflect.getOwnPropertyDescriptor(
   'size',
 ).get;
 
-function makeEnvironment(allowed, previousQuery) {
+function makeEnvironment(allowed, previousQuery, secure = false) {
   const permissions = { query: previousQuery };
   class PagePermissionStatus extends EventTarget {}
   class PageNavigator {}
   Object.defineProperty(PageNavigator.prototype, 'userAgent', {
     get() { return 'fixture'; },
   });
+  const navigator = new PageNavigator();
+  navigator.permissions = permissions;
 
   const pageWindow = {
-    navigator: { permissions },
+    navigator,
     PermissionStatus: PagePermissionStatus,
   };
   const window = {
     Object,
     EventTarget,
     Navigator: PageNavigator,
-    isSecureContext: false,
-    navigator: pageWindow.navigator,
+    isSecureContext: secure,
+    navigator,
     wrappedJSObject: pageWindow,
   };
   const context = {
@@ -67,8 +73,8 @@ function makeEnvironment(allowed, previousQuery) {
     },
   };
 
-  vm.runInNewContext(`${permissionsSource}\n${source}`, context);
-  return { permissions, PagePermissionStatus };
+  vm.runInNewContext(`${webidlSource}\n${permissionsSource}\n${source}`, context);
+  return { permissions, PagePermissionStatus, pageWindow };
 }
 
 async function queryState(label, allowed) {
@@ -100,6 +106,20 @@ async function queryState(label, allowed) {
   assert.equal(secondChanges, 1);
 }
 
+function layoutHandlerCase() {
+  const { pageWindow } = makeEnvironment(
+    true,
+    () => Promise.resolve({ state: 'previous' }),
+    true,
+  );
+  const keyboard = pageWindow.navigator.keyboard;
+  assert.ok(keyboard);
+  const handler = () => {};
+  keyboard.onlayoutchange = handler;
+  assert.equal(keyboard.onlayoutchange, handler);
+  keyboard.onlayoutchange = null;
+  assert.equal(keyboard.onlayoutchange, null);
+}
 async function stackingCases() {
   const calls = [];
   const previousResult = { source: 'previous-wrapper' };
@@ -124,7 +144,7 @@ async function stackingCases() {
   assert.equal(await permissions.query(otherPolyfill), previousResult);
   assert.equal(calls.length, 2);
   assert.equal(calls[1].descriptor, otherPolyfill);
-
+  layoutHandlerCase();
   const status = await permissions.query({ name: 'keyboard-map' });
   assert.equal(status.state, 'granted');
   assert.equal(calls.length, 2, 'keyboard-map must not recurse to previous query');

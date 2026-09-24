@@ -145,6 +145,35 @@ async function answerDelegation(childPort, parentPort, frameId, delegated) {
   assert.ok(response);
   return response.result?.keyboardMap === 'granted';
 }
+async function answerNestedDelegation(childPort, parentPort, topPort, childFrameId, parentFrameId) {
+  const id = childFrameId + 1000;
+  childPort.emitMessage({ type: 'request', id, operation: 'getPolicy' });
+  await flush();
+  await flush();
+  const childQuery = findDelegationQuery(parentPort, childFrameId);
+  assert.ok(childQuery);
+  parentPort.emitMessage({
+    action: 'frameDelegationResult',
+    requestId: childQuery.requestId,
+    delegated: true,
+  });
+  await flush();
+  await flush();
+  const parentQuery = findDelegationQuery(topPort, parentFrameId);
+  assert.ok(parentQuery);
+  topPort.emitMessage({
+    action: 'frameDelegationResult',
+    requestId: parentQuery.requestId,
+    delegated: true,
+  });
+  await flush();
+  await flush();
+  const response = childPort.posted.find(
+    (message) => message.type === 'response' && message.id === id,
+  );
+  assert.ok(response);
+  return response.result?.keyboardMap === 'granted';
+}
 
 async function backgroundCases() {
   const background = makeBackground();
@@ -294,6 +323,38 @@ async function backgroundCases() {
     origin: 'https://parent.example',
     url: 'https://parent.example/index.html',
   }), 9), true);
+  topNavigation(background, {
+    documentId: 'top-bare-member',
+    responseHeaders: [{ name: 'Permissions-Policy', value: 'foo, keyboard-map=()' }],
+  });
+  assert.equal(await policyResult(connect(background, {
+    frameId: 0,
+    documentId: 'top-bare-member',
+    origin: 'https://parent.example',
+    url: 'https://parent.example/index.html',
+  }), 16), false);
+
+  topNavigation(background, {
+    documentId: 'top-bare-parameter',
+    responseHeaders: [{ name: 'Permissions-Policy', value: 'keyboard-map=();foo' }],
+  });
+  assert.equal(await policyResult(connect(background, {
+    frameId: 0,
+    documentId: 'top-bare-parameter',
+    origin: 'https://parent.example',
+    url: 'https://parent.example/index.html',
+  }), 17), false);
+
+  topNavigation(background, {
+    documentId: 'top-number',
+    responseHeaders: [{ name: 'Permissions-Policy', value: 'keyboard-map=123' }],
+  });
+  assert.equal(await policyResult(connect(background, {
+    frameId: 0,
+    documentId: 'top-number',
+    origin: 'https://parent.example',
+    url: 'https://parent.example/index.html',
+  }), 18), true);
 
   topNavigation(background, { documentId: 'top-parent' });
   const parent = connect(background, {
@@ -319,6 +380,92 @@ async function backgroundCases() {
   });
   assert.equal(await answerDelegation(sameChild, parent, 1, true), true);
 
+  const boundaryBackground = makeBackground();
+  topNavigation(boundaryBackground, {
+    documentId: 'boundary-top',
+    responseHeaders: [{
+      name: 'Permissions-Policy',
+      value: 'keyboard-map=("https://child.example")',
+    }],
+  });
+  const boundaryTop = connect(boundaryBackground, {
+    frameId: 0,
+    documentId: 'boundary-top',
+    origin: 'https://parent.example',
+    url: 'https://parent.example/index.html',
+  });
+  boundaryBackground.navigate({
+    tabId: 1,
+    frameId: 1,
+    requestId: 'boundary-child',
+    documentId: 'boundary-child',
+    url: 'https://child.example/frame',
+    parentFrameId: 0,
+    responseHeaders: [],
+  });
+  const boundaryChild = connect(boundaryBackground, {
+    frameId: 1,
+    documentId: 'boundary-child',
+    origin: 'https://child.example',
+    url: 'https://child.example/frame',
+  });
+  assert.equal(await policyResult(boundaryTop, 19), false);
+  assert.equal(await policyResult(boundaryChild, 20), false);
+
+  const nestedAllowedBackground = makeBackground();
+  topNavigation(nestedAllowedBackground, {
+    documentId: 'nested-allowed-top',
+    responseHeaders: [{
+      name: 'Permissions-Policy',
+      value: 'keyboard-map=("https://parent.example")',
+    }],
+  });
+  const nestedAllowedTop = connect(nestedAllowedBackground, {
+    frameId: 0,
+    documentId: 'nested-allowed-top',
+    origin: 'https://parent.example',
+    url: 'https://parent.example/index.html',
+  });
+  nestedAllowedBackground.navigate({
+    tabId: 1,
+    frameId: 1,
+    requestId: 'nested-allowed-parent',
+    documentId: 'nested-allowed-parent',
+    url: 'https://parent.example/frame',
+    parentFrameId: 0,
+    responseHeaders: [{
+      name: 'Permissions-Policy',
+      value: 'keyboard-map=(self "https://child.example")',
+    }],
+  });
+  const nestedAllowedParent = connect(nestedAllowedBackground, {
+    frameId: 1,
+    documentId: 'nested-allowed-parent',
+    origin: 'https://parent.example',
+    url: 'https://parent.example/frame',
+  });
+  nestedAllowedBackground.navigate({
+    tabId: 1,
+    frameId: 2,
+    requestId: 'nested-allowed-child',
+    documentId: 'nested-allowed-child',
+    url: 'https://child.example/frame',
+    parentFrameId: 1,
+    responseHeaders: [],
+  });
+  const nestedAllowedChild = connect(nestedAllowedBackground, {
+    frameId: 2,
+    documentId: 'nested-allowed-child',
+    origin: 'https://child.example',
+    url: 'https://child.example/frame',
+  });
+  assert.equal(await answerNestedDelegation(
+    nestedAllowedChild,
+    nestedAllowedParent,
+    nestedAllowedTop,
+    2,
+    1,
+  ), true);
   background.navigate({
     tabId: 1,
     frameId: 2,
@@ -571,6 +718,11 @@ function sourceMatcherCases() {
   assert.equal(matcher.allows({ kind: 'sources', sources: [matcher.parse('http://example.com', false)] }, 'https://example.com:444', 'https://self.example'), false);
   assert.equal(matcher.allows({ kind: 'sources', sources: [matcher.parse('https://*.example', false)] }, 'https://a.example:444', 'https://self.example'), false);
   assert.equal(matcher.allows({ kind: 'sources', sources: [matcher.parse('https://example.com:*', false)] }, 'https://example.com:444', 'https://self.example'), true);
+  assert.equal(matcher.allows({ kind: 'sources', sources: [matcher.parse('example.com', false)] }, 'https://example.com', 'https://self.example'), true);
+  assert.equal(matcher.allows({ kind: 'sources', sources: [matcher.parse('*.example.com', false)] }, 'https://example.com', 'https://self.example'), false);
+  assert.equal(matcher.allows({ kind: 'sources', sources: [matcher.parse('*.example.com', false)] }, 'https://a.example.com', 'https://self.example'), true);
+  assert.equal(matcher.allows({ kind: 'sources', sources: [matcher.parse('https://example.com/path', false)] }, 'https://example.com/path', 'https://self.example'), true);
+  assert.equal(matcher.allows({ kind: 'sources', sources: [matcher.parse('https://example.com/path', false)] }, 'https://example.com/other', 'https://self.example'), false);
 }
 
 function makeContentPolicy(iframes, documentApi = true) {
@@ -592,6 +744,8 @@ function makeContentPolicy(iframes, documentApi = true) {
     URL,
     Promise,
     console,
+    setTimeout,
+    clearTimeout,
   };
   vm.runInNewContext(
     `${sourceMatcherSource}\n${contentSource}\nglobalThis.keyboardPolicyFixture = keyboardPolicy;`,
@@ -635,16 +789,67 @@ async function contentCases() {
   assert.equal(await query([iframe({ allow: "keyboard-map 'src'", src: 'https://child.example/frame' })], 'https://child.example'), true);
   assert.equal(await query([iframe({ allow: "keyboard-map 'self'" })], 'https://parent.example'), true);
   assert.equal(await query([iframe({ allow: "keyboard-map 'none'" })], 'https://child.example'), false);
+  assert.equal(await query([iframe({ allow: "keyboard-map 'none'" })], 'https://parent.example'), false);
   assert.equal(await query([iframe({ allow: 'keyboard-map none' })], 'https://child.example'), false);
   assert.equal(await query([iframe({ allow: "keyboard-map 'none'; keyboard-map *" })], 'https://child.example'), true);
   assert.equal(await query([iframe({ allow: "keyboard-map *; keyboard-map 'none'" })], 'https://child.example'), false);
-  assert.equal(await query([iframe({ allow: '', src: 'https://child.example/frame' })], 'https://child.example'), true);
-  assert.equal(await query([iframe({ allow: "keyboard-map 'none'", frameId: 1 }), iframe({ allow: 'keyboard-map *', frameId: 2 })], 'https://child.example', 2), true);
+  assert.equal(await query([iframe({ allow: '', src: 'https://child.example/frame' })], 'https://child.example'), false);
+  assert.equal(await query([iframe({ allow: '', src: 'https://child.example/frame' })], 'https://parent.example'), true);
   assert.equal(await query([iframe({ allow: 'keyboard-map *', frameId: 3, documentId: 'actual' })], 'https://child.example', 3, 'wrong'), false);
   assert.equal(await query([iframe({ allow: 'keyboard-map *', frameId: 3, documentId: 'actual' })], 'https://child.example', 3, 'wrong', false), true);
   assert.equal(await query([{ ...iframe({ allow: 'keyboard-map *', frameId: 4, documentId: 'child' }) }], 'https://child.example', 4), true);
 }
+async function transportRecoveryCases() {
+  const ports = [];
+  const browser = {
+    runtime: {
+      connect() {
+        const port = makePort();
+        ports.push(port);
+        return port;
+      },
+    },
+  };
+  const context = {
+    browser,
+    URL,
+    Promise,
+    console,
+    setTimeout,
+    clearTimeout,
+  };
+  vm.runInNewContext(
+    `${sourceMatcherSource}\n${contentSource}\nglobalThis.keyboardRecoveryFixture = keyboardPolicy;`,
+    context,
+  );
+  assert.equal(ports.length, 1);
 
+  const firstResult = context.keyboardRecoveryFixture.allowsKeyboardMap();
+  await flush();
+  const firstRequest = ports[0].posted.find((message) => message.type === 'request');
+  assert.ok(firstRequest);
+  ports[0].emitMessage({
+    type: 'response',
+    id: firstRequest.id,
+    result: { keyboardMap: 'granted' },
+  });
+  assert.equal(await firstResult, true);
+
+  ports[0].emitDisconnect();
+  await new Promise((resolve) => setTimeout(resolve, 130));
+  assert.equal(ports.length, 2);
+
+  const secondResult = context.keyboardRecoveryFixture.allowsKeyboardMap();
+  await flush();
+  const secondRequest = ports[1].posted.find((message) => message.type === 'request');
+  assert.ok(secondRequest);
+  ports[1].emitMessage({
+    type: 'response',
+    id: secondRequest.id,
+    result: { keyboardMap: 'granted' },
+  });
+  assert.equal(await secondResult, true);
+}
 async function serviceCases() {
   const operations = [];
   const context = {
@@ -680,6 +885,7 @@ async function serviceCases() {
   sourceMatcherCases();
   await backgroundCases();
   await contentCases();
+  await transportRecoveryCases();
   await serviceCases();
   console.log('keyboard-map policy fixture passed');
 })().catch((error) => {

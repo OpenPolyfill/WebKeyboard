@@ -3,9 +3,28 @@
 
 const keyboardPolicy = (() => {
   const PORT_NAME = "webkeyboard-policy";
-  const port = browser.runtime.connect({ name: PORT_NAME });
+  let port = null;
   const pending = new Map();
   let nextId = 0;
+  let reconnectTimer = null;
+  let disconnected = true;
+
+  function scheduleReconnect() {
+    if (reconnectTimer !== null) return;
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      connectPort();
+    }, 100);
+  }
+
+  function retirePort(candidate) {
+    if (candidate && port !== candidate) return;
+    port = null;
+    disconnected = true;
+    for (const entry of pending.values()) entry.reject(new Error("Policy port disconnected"));
+    pending.clear();
+    scheduleReconnect();
+  }
 
   function splitDirectives(value) {
     const parts = [];
@@ -88,10 +107,7 @@ const keyboardPolicy = (() => {
   function containerAllows(frame, tokens, query) {
     for (const token of tokens) {
       const lower = token.value.toLowerCase();
-      if (lower === "none") {
-        if (token.quoted && token.quote === "'") continue;
-        continue;
-      }
+      if (lower === "none") continue;
       if (!token.quoted && token.value === "*") return true;
       if (lower === "self") {
         if (token.quoted && token.quote === "'" &&
@@ -122,10 +138,8 @@ const keyboardPolicy = (() => {
     } catch (_) {
       return false;
     }
-    if (raw === null) return query.childOrigin === query.parentOrigin;
-    if (raw.trim() === "") {
-      const origin = sourceOrigin(frame, query.parentOrigin);
-      return !!origin && origin === query.childOrigin;
+    if (raw === null || raw.trim() === "") {
+      return query.childOrigin === query.parentOrigin;
     }
 
     const declarations = splitDirectives(raw);
@@ -168,7 +182,9 @@ const keyboardPolicy = (() => {
           } catch (_) {
             return false;
           }
-          if (documentId !== query.childDocumentId) return false;
+          if (typeof documentId !== "string" || documentId !== query.childDocumentId) {
+            return false;
+          }
         }
         return iframeAllowsKeyboardMap(frame, query);
       }
@@ -176,25 +192,12 @@ const keyboardPolicy = (() => {
     return false;
   }
 
-  function request(operation) {
-    const id = ++nextId;
-    return new Promise((resolve, reject) => {
-      pending.set(id, { resolve, reject });
-      try {
-        port.postMessage({ type: "request", id, operation });
-      } catch (error) {
-        pending.delete(id);
-        reject(error);
-      }
-    });
-  }
-
-  port.onMessage.addListener((message) => {
+  function handleMessage(message, messagePort) {
     if (!message) return;
     if (message.action === "frameDelegationQuery") {
       frameDelegationForChild(message).then((delegated) => {
         try {
-          port.postMessage({
+          messagePort.postMessage({
             action: "frameDelegationResult",
             requestId: message.requestId,
             delegated,
@@ -209,7 +212,41 @@ const keyboardPolicy = (() => {
     pending.delete(message.id);
     if (message.error) entry.reject(message.error);
     else entry.resolve(message.result);
-  });
+  }
+
+  function connectPort() {
+    if (port && !disconnected) return port;
+    let nextPort;
+    try {
+      nextPort = browser.runtime.connect({ name: PORT_NAME });
+      port = nextPort;
+      disconnected = false;
+      nextPort.onMessage.addListener((message) => handleMessage(message, nextPort));
+      nextPort.onDisconnect.addListener(() => retirePort(nextPort));
+      return nextPort;
+    } catch (_) {
+      retirePort();
+      return null;
+    }
+  }
+
+  function request(operation) {
+    const activePort = connectPort();
+    if (!activePort || disconnected) {
+      return Promise.reject(new Error("Policy port unavailable"));
+    }
+    const id = ++nextId;
+    return new Promise((resolve, reject) => {
+      pending.set(id, { resolve, reject });
+      try {
+        activePort.postMessage({ type: "request", id, operation });
+      } catch (error) {
+        pending.delete(id);
+        retirePort(activePort);
+        reject(error);
+      }
+    });
+  }
 
   async function allowsKeyboardMap() {
     try {
@@ -220,5 +257,6 @@ const keyboardPolicy = (() => {
     }
   }
 
+  connectPort();
   return { allowsKeyboardMap };
 })();

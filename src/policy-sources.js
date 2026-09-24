@@ -16,19 +16,21 @@ const webKeyboardSources = (() => {
       return { kind: "scheme", scheme: value.slice(0, -1).toLowerCase() };
     }
 
-    const match = /^([a-z][a-z\d+.-]*):\/\/((?:\*\.)?[^/:]+)(?::(\*|\d+))?$/i.exec(value);
+    const match = /^(?:([a-z][a-z\d+.-]*):\/\/)?((?:\*\.)?[^/:]+)(?::(\*|\d+))?(\/.*)?$/i.exec(value);
     if (!match) return null;
-    const scheme = match[1].toLowerCase();
+    const scheme = match[1]?.toLowerCase() || null;
     const wildcardHost = match[2].startsWith("*.");
     const hostname = wildcardHost ? match[2].slice(2) : match[2];
     if (!hostname || hostname.includes("*")) return null;
     try {
+      const urlScheme = scheme || "https";
       return {
         kind: "host",
         scheme,
-        hostname: new URL(`${scheme}://${hostname}`).hostname.toLowerCase(),
+        hostname: new URL(`${urlScheme}://${hostname}`).hostname.toLowerCase(),
         wildcardHost,
         port: match[3] || "",
+        path: match[4] || "",
       };
     } catch (_) {
       return null;
@@ -45,6 +47,12 @@ const webKeyboardSources = (() => {
       (source === "ws" && target === "wss");
   }
 
+  function pathMatches(sourcePath, targetPath) {
+    if (!sourcePath) return true;
+    if (sourcePath.endsWith("/")) return targetPath.startsWith(sourcePath);
+    return targetPath === sourcePath;
+  }
+
   function matches(source, targetOrigin, selfOrigin) {
     if (source.kind === "all") return true;
     if (source.kind === "origin") return targetOrigin === source.origin;
@@ -58,7 +66,8 @@ const webKeyboardSources = (() => {
     }
     const targetScheme = target.protocol.slice(0, -1).toLowerCase();
     if (source.kind === "scheme") return schemeMatches(source.scheme, targetScheme);
-    if (source.kind !== "host" || !schemeMatches(source.scheme, targetScheme)) return false;
+    if (source.kind !== "host") return false;
+    if (source.scheme && !schemeMatches(source.scheme, targetScheme)) return false;
 
     const hostname = target.hostname.toLowerCase();
     if (source.wildcardHost) {
@@ -66,10 +75,11 @@ const webKeyboardSources = (() => {
     } else if (hostname !== source.hostname) {
       return false;
     }
-
+    if (!pathMatches(source.path, target.pathname)) return false;
     if (source.port === "*") return true;
+
     const targetPort = target.port || defaultPort(targetScheme);
-    if (source.scheme !== targetScheme) {
+    if (source.scheme && source.scheme !== targetScheme) {
       if (
         (source.scheme === "http" && targetScheme === "https") ||
         (source.scheme === "ws" && targetScheme === "wss")
@@ -78,9 +88,10 @@ const webKeyboardSources = (() => {
       }
       return false;
     }
-    const sourcePort = source.port || defaultPort(source.scheme);
-    if (!sourcePort) return true;
-    return targetPort === sourcePort;
+    if (!source.port) {
+      return !source.scheme || targetPort === defaultPort(source.scheme);
+    }
+    return targetPort === source.port;
   }
 
   function allows(allowlist, targetOrigin, selfOrigin) {
