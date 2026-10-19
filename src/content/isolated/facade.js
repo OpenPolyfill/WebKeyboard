@@ -10,6 +10,7 @@
   const pageAddEventListener = pageEventTargetPrototype.addEventListener;
   const pageRemoveEventListener =
     pageEventTargetPrototype.removeEventListener;
+  const pageDispatchEvent = pageEventTargetPrototype.dispatchEvent;
   const keyboardBrand = new WeakSet();
   const keyboardLayoutMapBrand = new WeakSet();
   const keyboardLayoutMapBackings = new WeakMap();
@@ -213,13 +214,13 @@
     configurable: true,
   });
 
-  /** Creates a new map with the fixed standard US-QWERTY layout. */
-  function createKeyboardLayoutMap() {
+  /** Creates a page-realm map from the selected layout data. */
+  function createKeyboardLayoutMap(layoutData) {
     const instance = unwrap(new PageObject());
     const backing = createPageMap();
     setPagePrototype(instance, KeyboardLayoutMapPrototype);
 
-    for (const [code, key] of STANDARD_US_LAYOUT) {
+    for (const [code, key] of Object.entries(layoutData)) {
       Reflect.apply(pageMapSet, backing, [code, key]);
     }
 
@@ -335,7 +336,14 @@
         );
       }
 
-      return createKeyboardLayoutMap();
+      const selected = await browser.runtime.sendMessage({
+        type: "webkeyboard-layout",
+        action: "getLayout",
+      });
+      if (!selected?.data) {
+        throw new DOMException("Keyboard layout data is unavailable", "OperationError");
+      }
+      return createKeyboardLayoutMap(selected.data);
     });
   }
 
@@ -414,6 +422,12 @@
   const keyboardInstance = unwrap(new PageEventTarget());
   setPagePrototype(keyboardInstance, KeyboardPrototype);
   keyboardBrand.add(keyboardInstance);
+  if (typeof request !== "undefined") {
+    request.onLayoutChange(() => {
+      const event = new window.Event("layoutchange");
+      Reflect.apply(pageDispatchEvent, keyboardInstance, [event]);
+    });
+  }
 
   definePageProperty(pageWindow, "Keyboard", {
     value: KeyboardObject,

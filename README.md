@@ -8,7 +8,16 @@ Target: **Firefox 151+**.
 
 **Keyboard Lock** is implemented, including full and per-code locks for Firefox browser shortcuts.
 
-**Keyboard Map** is implemented with a fixed standard US-QWERTY map. It does not inspect the operating-system keyboard layout and never fires `layoutchange`.
+**Keyboard Map** supports per-origin selection of bundled XKB and custom layouts.
+The bundled presets are compiled from the installed xkeyboard-config data for
+US, UK, German, French, Japanese, Korean, and Brazilian layouts. “System”
+currently falls back to US; active desktop layout detection is out of scope.
+
+Bundled XKB presets are generated with libxkbcommon 1.13.2 from the installed
+`evdev` rules using the `pc105` model and the unmodified key level. The catalog
+contains the base `us`, `gb`, `de`, `fr`, `jp`, `kr`, and `br` layouts. It is
+bundled data, not runtime desktop detection; Shift/AltGr layers and compose
+sequences are outside this `KeyboardLayoutMap` dataset.
 
 ## Install
 
@@ -44,8 +53,13 @@ interface KeyboardLayoutMap {
 };
 ```
 
-`getLayoutMap()` always returns the standard US-QWERTY writing-system key map. The
-map is fixed for the lifetime of the page, so `layoutchange` is never dispatched.
+`getLayoutMap()` uses the layout selected for the page's origin in the addon popup.
+“System” currently falls back to US because Firefox layout detection is not
+available. Standard and user-defined layouts are stored in the addon database;
+custom layouts are managed from the popup's editor link. Changing the selected
+layout dispatches `layoutchange` on the `Keyboard` instance in open pages.
+Existing map objects remain unchanged; call `getLayoutMap()` again to retrieve
+the newly selected map.
 
 `navigator.permissions.query({ name: "keyboard-map" })` is also supported and
 returns a page-realm `PermissionStatus` with `state` set to `"granted"` or

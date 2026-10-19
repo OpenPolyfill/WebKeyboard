@@ -6,6 +6,7 @@ const request = (() => {
 
   let port = null;
   const pending = new Map();
+  const layoutChangeListeners = new Set();
   let nextId = 0;
   let disconnected = false;
 
@@ -28,6 +29,10 @@ const request = (() => {
 
     port.onMessage.addListener((message) => {
       if (!message || typeof message !== "object") return;
+      if (message.type === "layoutchange") {
+        for (const listener of layoutChangeListeners) listener(message);
+        return;
+      }
       if (message.type !== "response" || !Number.isInteger(message.id)) return;
 
       const entry = pending.get(message.id);
@@ -54,7 +59,7 @@ const request = (() => {
     });
   }
 
-  return (operation, payload = null) => {
+  const send = (operation, payload = null) => {
     connect();
     if (disconnected || !port) {
       return Promise.reject(
@@ -75,4 +80,10 @@ const request = (() => {
       }
     });
   };
+  send.onLayoutChange = (listener) => {
+    layoutChangeListeners.add(listener);
+    connect();
+    return () => layoutChangeListeners.delete(listener);
+  };
+  return send;
 })();

@@ -1,9 +1,180 @@
 /** WebKeyboard background context router. */
 "use strict";
 
-const CONTROL_PORT_NAME = "webkeyboard-control";
+let layoutCatalogPromise;
+const layoutDataPromises = new Map();
+function getLayoutCatalog() {
+  if (!layoutCatalogPromise) {
+    layoutCatalogPromise = fetch(browser.runtime.getURL("layouts/index.json"))
+      .then((response) => {
+        if (!response.ok) throw new Error("Unable to load bundled XKB layout index");
+        return response.json();
+      })
+      .then((catalog) => catalog.layouts);
+  }
+  return layoutCatalogPromise;
+}
+async function getLayoutData(id) {
+  const entry = (await getLayoutCatalog()).find((layout) => layout.id === id);
+  if (!entry) return null;
+  if (!layoutDataPromises.has(id)) {
+    layoutDataPromises.set(
+      id,
+      fetch(browser.runtime.getURL(`layouts/${entry.file}`))
+        .then((response) => {
+          if (!response.ok) throw new Error(`Unable to load XKB layout ${id}`);
+          return response.json();
+        })
+        .then((layout) => {
+          if (
+            layout.id !== id ||
+            typeof layout.name !== "string" ||
+            !validLayoutData(layout.data)
+          ) {
+            throw new Error(`Invalid bundled XKB layout ${id}`);
+          }
+          return layout;
+        }),
+    );
+  }
+  return layoutDataPromises.get(id);
+}
 
-const lockOwners = new Map();
+const layoutPorts = new Set();
+
+function notifyOriginLayoutChange(origin) {
+  for (const port of layoutPorts) {
+    if (canonicalOrigin(port.sender?.url) !== origin) continue;
+    try {
+      port.postMessage({ type: "layoutchange", origin });
+    } catch {
+      layoutPorts.delete(port);
+    }
+  }
+}
+const layoutDatabase = (() => {
+  let opening;
+  function open() {
+    if (opening) return opening;
+    opening = new Promise((resolve, reject) => {
+      const request = indexedDB.open("webkeyboard-layouts", 1);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        db.createObjectStore("origins", { keyPath: "origin" });
+        db.createObjectStore("customLayouts", { keyPath: "id" });
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    return opening;
+  }
+  async function run(store, mode, action) {
+    const db = await open();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(store, mode);
+      const result = action(tx.objectStore(store));
+      tx.oncomplete = () => resolve(result?.result);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  }
+  return {
+    get: (store, key) => run(store, "readonly", (s) => s.get(key)),
+    all: (store) => run(store, "readonly", (s) => s.getAll()),
+    put: (store, value) => run(store, "readwrite", (s) => s.put(value)),
+    delete: (store, key) => run(store, "readwrite", (s) => s.delete(key)),
+  };
+})();
+
+function validLayoutData(data) {
+  return data && typeof data === "object" && !Array.isArray(data) &&
+    Object.entries(data).every(([code, value]) =>
+      /^(Key[A-Z]|Digit[0-9]|Backquote|Backslash|BracketLeft|BracketRight|Comma|Equal|Minus|Period|Quote|Semicolon|Slash|IntlBackslash|IntlRo|IntlYen)$/.test(code) &&
+      typeof value === "string" && value.length > 0,
+    );
+}
+
+function canonicalOrigin(value) {
+  try {
+    const origin = new URL(value).origin;
+    return origin === "null" ? null : origin;
+  } catch {
+    return null;
+  }
+}
+
+async function handleLayoutMessage(message, sender) {
+  const senderIsAddon = sender.url?.startsWith(browser.runtime.getURL(""));
+  const origin = senderIsAddon
+    ? canonicalOrigin(message.origin)
+    : canonicalOrigin(sender.url);
+  switch (message.action) {
+    case "getLayout": {
+      const choice = await layoutDatabase.get("origins", origin);
+      const legacyIds = { US: "xkb:us", UK: "xkb:gb", DE: "xkb:de", FR: "xkb:fr" };
+      const savedId = choice?.layoutId === "system"
+        ? "system"
+        : legacyIds[choice?.layoutId] || choice?.layoutId || "system";
+      const effectiveId = savedId === "system" ? "xkb:us" : savedId;
+      if (effectiveId.startsWith("custom:")) {
+        const custom = await layoutDatabase.get("customLayouts", effectiveId.slice(7));
+        return custom
+          ? { layoutId: senderIsAddon ? savedId : effectiveId, data: custom.data }
+          : { layoutId: senderIsAddon ? "system" : "xkb:us", data: (await getLayoutData("xkb:us")).data };
+      }
+      const layout = await getLayoutData(effectiveId) || await getLayoutData("xkb:us");
+      return {
+        layoutId: senderIsAddon ? savedId : effectiveId,
+        data: layout.data,
+      };
+    }
+    case "setOriginLayout": {
+      if (!senderIsAddon || !origin) throw new Error("Layout selection requires the addon popup");
+      const id = message.layoutId;
+      const custom = typeof id === "string" && id.startsWith("custom:") &&
+        await layoutDatabase.get("customLayouts", id.slice(7));
+      if (!(id === "system" || (await getLayoutCatalog()).some((x) => x.id === id) || custom)) throw new Error("Invalid layout selection");
+      const current = await layoutDatabase.get("origins", origin);
+      await layoutDatabase.put("origins", { origin, layoutId: id });
+      if (current?.layoutId !== id) notifyOriginLayoutChange(origin);
+      return true;
+    }
+    case "listLayouts": {
+      if (!senderIsAddon) throw new Error("Invalid layout selector");
+      const layouts = await Promise.all(
+        (await getLayoutCatalog()).map((entry) => getLayoutData(entry.id)),
+      );
+      return layouts.map(({ id, name }) => ({ id, name }));
+    }
+    case "getLayoutPreset": {
+      if (!senderIsAddon) throw new Error("Invalid layout editor");
+      const layout = await getLayoutData(message.id);
+      if (!layout) throw new Error("Unknown bundled layout");
+      return layout;
+    }
+    case "listCustomLayouts":
+      if (!senderIsAddon) throw new Error("Invalid layout editor");
+      return layoutDatabase.all("customLayouts");
+    case "saveCustomLayout": {
+      const item = message.layout;
+      if (!senderIsAddon || !item || typeof item.name !== "string" || !item.name.trim() || !validLayoutData(item.data)) throw new Error("Invalid custom layout");
+      const saved = { id: item.id || crypto.randomUUID(), name: item.name.trim(), data: item.data };
+      await layoutDatabase.put("customLayouts", saved);
+      return saved;
+    }
+    case "deleteCustomLayout":
+      if (!senderIsAddon) throw new Error("Invalid layout editor");
+      await layoutDatabase.delete("customLayouts", message.id);
+      return true;
+    default:
+      throw new Error("Unsupported layout operation");
+  }
+}
+
+browser.runtime.onMessage?.addListener((message, sender) => {
+  if (!message || message.type !== "webkeyboard-layout") return undefined;
+  return handleLayoutMessage(message, sender);
+});
 
 /**
  * Writes a structured WebKeyboard debug message.
@@ -106,6 +277,7 @@ browser.runtime.onConnect.addListener((port) => {
   const sender = port.sender;
   const tabId = sender.tab.id;
   const frameId = sender.frameId;
+  layoutPorts.add(port);
   debug("control port connected", { tabId, frameId });
 
   port.onMessage.addListener((request) => {
@@ -124,7 +296,7 @@ browser.runtime.onConnect.addListener((port) => {
   });
 
   port.onDisconnect.addListener(() => {
-    debug("control port disconnected", { tabId, frameId });
+    layoutPorts.delete(port);
 
     if (lockOwners.get(tabId) !== port) return;
 

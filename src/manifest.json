@@ -17,11 +17,16 @@
   },
   "permissions": [
     "webRequest",
-    "storage"
+    "storage",
+    "activeTab"
   ],
   "host_permissions": [
     "<all_urls>"
   ],
+  "action": {
+    "default_title": "Keyboard layout",
+    "default_popup": "popup.html"
+  },
   "background": {
     "scripts": [
       "policy-sources.js",
