@@ -9,11 +9,11 @@
     "build-for-amo": "npm run build",
     "fx-build": "npm run build",
     "build": "web-ext build -s src -a dist --overwrite-dest",
-    "test": "npm run test:policy && npm run test:permissions && node tests/policy-restart-fixture.js",
-    "test:policy": "node tests/policy-fixture.js",
-    "test:permissions": "node tests/permissions-fixture.js"
+    "test": "playwright test --workers=1"
   },
   "devDependencies": {
+    "@openpolyfill/firefox-addon-playwright-harness": "^0.2.0",
+    "@playwright/test": "^1.64.1",
     "web-ext": "^10.5.0"
   },
   "overrides": {
@@ -21,5 +21,8 @@
     "brace-expansion": "5.0.9",
     "shell-quote": "1.10.0",
     "image-size": "2.0.3"
+  },
+  "allowScripts": {
+    "@openpolyfill/firefox-addon-playwright-harness": true
   }
 }

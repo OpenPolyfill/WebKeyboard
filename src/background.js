@@ -2,6 +2,8 @@
 "use strict";
 
 let layoutCatalogPromise;
+const CONTROL_PORT_NAME = "webkeyboard-control";
+const lockOwners = new Map();
 const layoutDataPromises = new Map();
 function getLayoutCatalog() {
   if (!layoutCatalogPromise) {

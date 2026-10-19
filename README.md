@@ -118,6 +118,17 @@ The Experiment backend observes Firefox chrome keyboard events and updates `Wind
 
 The polyfill is not installed when `window.isSecureContext` is false.
 
+## Testing
+
+`npm test` runs the Firefox add-on browser suite using
+`@openpolyfill/firefox-addon-playwright-harness`.
+
+```sh
+npm ci
+npx playwright install firefox
+npm test
+```
+
 ## Debugging
 
 Background activity is logged with `console.debug()`. Backend failures are logged with `console.error()`.
