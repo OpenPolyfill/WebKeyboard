@@ -1,0 +1,21 @@
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 300px; color: #202124; background: #fff; font: 14px system-ui, sans-serif; }
+main { padding: 16px; }
+h1 { margin: 0 0 16px; font-size: 18px; }
+h2 { margin-top: 28px; font-size: 16px; }
+label { display: block; margin: 12px 0 6px; font-weight: 600; }
+input, select, textarea { width: 100%; padding: 9px; border: 1px solid #888; border-radius: 4px; font: inherit; }
+textarea { resize: vertical; font-family: ui-monospace, monospace; }
+#options { max-height: 280px; overflow: auto; margin-top: 5px; border: 1px solid #ccc; border-radius: 4px; }
+#options button { display: block; width: 100%; padding: 9px; border: 0; background: #fff; color: inherit; text-align: left; cursor: pointer; }
+#options button:hover, #options button[aria-selected="true"] { background: #e8f0fe; }
+button { padding: 8px 11px; border: 1px solid #777; border-radius: 4px; background: #f8f9fa; cursor: pointer; }
+button:hover { background: #e8eaed; }
+#inherit { margin-top: 10px; }
+#editor { width: 100%; margin-top: 12px; }
+#status { min-height: 1.2em; color: #444; }
+.editor { max-width: 760px; margin: 0 auto; }
+.buttons { display: flex; gap: 8px; margin-top: 12px; }
+#list { padding: 0; list-style: none; }
+#list li { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid #ddd; }
+#list span { flex: 1; }

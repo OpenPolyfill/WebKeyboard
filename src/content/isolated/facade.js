@@ -1,21 +1,243 @@
 /** WebKeyboard WebIDL facade. */
 "use strict";
 
-if (window.isSecureContext) {
+{
   const PageObject = window.Object;
   const PageEventTarget = window.EventTarget;
   const PageNavigator = window.Navigator;
   const pageWindow = window.wrappedJSObject;
+  const pageEventTargetPrototype = PageEventTarget.prototype;
+  const pageAddEventListener = pageEventTargetPrototype.addEventListener;
+  const pageRemoveEventListener =
+    pageEventTargetPrototype.removeEventListener;
+  const pageDispatchEvent = pageEventTargetPrototype.dispatchEvent;
   const keyboardBrand = new WeakSet();
+  const keyboardLayoutMapBrand = new WeakSet();
+  const keyboardLayoutMapBackings = new WeakMap();
+  const layoutChangeHandlers = new WeakMap();
+  const layoutChangeListeners = new WeakMap();
   const navigatorBrandGetter = Reflect.getOwnPropertyDescriptor(
     PageNavigator.prototype,
     "userAgent",
   )?.get;
 
-  let pageLockMethod = null;
-  let pageUnlockMethod = null;
-  let navigatorKeyboardGetter = null;
+  const STANDARD_US_LAYOUT = Object.freeze([
+    ["Backquote", "`"],
+    ["Backslash", "\\"],
+    ["BracketLeft", "["],
+    ["BracketRight", "]"],
+    ["Comma", ","],
+    ["Digit0", "0"],
+    ["Digit1", "1"],
+    ["Digit2", "2"],
+    ["Digit3", "3"],
+    ["Digit4", "4"],
+    ["Digit5", "5"],
+    ["Digit6", "6"],
+    ["Digit7", "7"],
+    ["Digit8", "8"],
+    ["Digit9", "9"],
+    ["Equal", "="],
+    ["KeyA", "a"],
+    ["KeyB", "b"],
+    ["KeyC", "c"],
+    ["KeyD", "d"],
+    ["KeyE", "e"],
+    ["KeyF", "f"],
+    ["KeyG", "g"],
+    ["KeyH", "h"],
+    ["KeyI", "i"],
+    ["KeyJ", "j"],
+    ["KeyK", "k"],
+    ["KeyL", "l"],
+    ["KeyM", "m"],
+    ["KeyN", "n"],
+    ["KeyO", "o"],
+    ["KeyP", "p"],
+    ["KeyQ", "q"],
+    ["KeyR", "r"],
+    ["KeyS", "s"],
+    ["KeyT", "t"],
+    ["KeyU", "u"],
+    ["KeyV", "v"],
+    ["KeyW", "w"],
+    ["KeyX", "x"],
+    ["KeyY", "y"],
+    ["KeyZ", "z"],
+    ["Minus", "-"],
+    ["Period", "."],
+    ["Quote", "'"],
+    ["Semicolon", ";"],
+    ["Slash", "/"],
+  ]);
 
+  /** Implements the non-constructible KeyboardLayoutMap interface. */
+  function KeyboardLayoutMap() {
+    illegalConstructor();
+  }
+
+  const KeyboardLayoutMapObject = exportToPage(KeyboardLayoutMap);
+  const KeyboardLayoutMapPrototype = unwrap(new PageObject());
+
+  definePageProperty(KeyboardLayoutMapObject, "prototype", {
+    value: KeyboardLayoutMapPrototype,
+    writable: false,
+    enumerable: false,
+    configurable: false,
+  });
+
+  definePageProperty(KeyboardLayoutMapPrototype, "constructor", {
+    value: KeyboardLayoutMapObject,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+
+  definePageProperty(KeyboardLayoutMapPrototype, Symbol.toStringTag, {
+    value: "KeyboardLayoutMap",
+    writable: false,
+    enumerable: false,
+    configurable: true,
+  });
+
+  function getKeyboardLayoutMapBacking(value) {
+    const receiver = requireBrand(value, keyboardLayoutMapBrand);
+    return { receiver, backing: keyboardLayoutMapBackings.get(receiver) };
+  }
+
+  /** Implements KeyboardLayoutMap.size. */
+  function getLayoutMapSize() {
+    const { backing } = getKeyboardLayoutMapBacking(this);
+    return Reflect.apply(pageMapSizeGetter, backing, []);
+  }
+
+  /** Implements KeyboardLayoutMap.get(). */
+  function getLayoutMapValue(key) {
+    const { backing } = getKeyboardLayoutMapBacking(this);
+    return Reflect.apply(pageMapGet, backing, [convertDOMString(key)]);
+  }
+
+  /** Implements KeyboardLayoutMap.has(). */
+  function hasLayoutMapKey(key) {
+    const { backing } = getKeyboardLayoutMapBacking(this);
+    return Reflect.apply(pageMapHas, backing, [convertDOMString(key)]);
+  }
+
+  /** Implements KeyboardLayoutMap.entries(). */
+  function getLayoutMapEntries() {
+    const { backing } = getKeyboardLayoutMapBacking(this);
+    return Reflect.apply(pageMapEntries, backing, []);
+  }
+
+  /** Implements KeyboardLayoutMap.keys(). */
+  function getLayoutMapKeys() {
+    const { backing } = getKeyboardLayoutMapBacking(this);
+    return Reflect.apply(pageMapKeys, backing, []);
+  }
+
+  /** Implements KeyboardLayoutMap.values(). */
+  function getLayoutMapValues() {
+    const { backing } = getKeyboardLayoutMapBacking(this);
+    return Reflect.apply(pageMapValues, backing, []);
+  }
+
+  /** Implements KeyboardLayoutMap.forEach(). */
+  function forEachLayoutMapEntry(callback, thisArg) {
+    const { receiver, backing } = getKeyboardLayoutMapBacking(this);
+    if (typeof callback !== "function") {
+      throw pageTypeError("KeyboardLayoutMap.forEach callback is not callable");
+    }
+
+    const callbackWrapper = exportToPage((value, key) =>
+      Reflect.apply(callback, thisArg, [value, key, receiver]),
+    );
+    return Reflect.apply(pageMapForEach, backing, [callbackWrapper]);
+  }
+
+  function setPageFunctionMetadata(method, name, length) {
+    definePageProperty(method, "name", {
+      value: name,
+      writable: false,
+      enumerable: false,
+      configurable: true,
+    });
+    definePageProperty(method, "length", {
+      value: length,
+      writable: false,
+      enumerable: false,
+      configurable: true,
+    });
+  }
+  function normalizeEventHandlerValue(value) {
+    const handler = unwrap(value);
+    if (
+      handler === null ||
+      (typeof handler !== "object" && typeof handler !== "function")
+    ) {
+      return null;
+    }
+    return handler;
+  }
+
+  const pageLayoutMapMethods = [
+    ["get", exportToPage(getLayoutMapValue), 1],
+    ["has", exportToPage(hasLayoutMapKey), 1],
+    ["entries", exportToPage(getLayoutMapEntries), 0],
+    ["keys", exportToPage(getLayoutMapKeys), 0],
+    ["values", exportToPage(getLayoutMapValues), 0],
+    ["forEach", exportToPage(forEachLayoutMapEntry), 1],
+  ];
+  for (const [name, method, length] of pageLayoutMapMethods) {
+    setPageFunctionMetadata(method, name, length);
+    definePageProperty(KeyboardLayoutMapPrototype, name, {
+      value: method,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+  }
+
+  const pageLayoutMapSizeGetter = exportToPage(getLayoutMapSize);
+  setPageFunctionMetadata(pageLayoutMapSizeGetter, "get size", 0);
+  definePageProperty(KeyboardLayoutMapPrototype, "size", {
+    get: pageLayoutMapSizeGetter,
+    set: undefined,
+    enumerable: true,
+    configurable: true,
+  });
+
+  const pageLayoutMapEntriesMethod = pageLayoutMapMethods[2][1];
+  definePageProperty(KeyboardLayoutMapPrototype, Symbol.iterator, {
+    value: pageLayoutMapEntriesMethod,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+
+  /** Creates a page-realm map from the selected layout data. */
+  function createKeyboardLayoutMap(layoutData) {
+    const instance = unwrap(new PageObject());
+    const backing = createPageMap();
+    setPagePrototype(instance, KeyboardLayoutMapPrototype);
+
+    for (const [code, key] of Object.entries(layoutData)) {
+      Reflect.apply(pageMapSet, backing, [code, key]);
+    }
+
+    keyboardLayoutMapBrand.add(instance);
+    keyboardLayoutMapBackings.set(instance, backing);
+    return instance;
+  }
+
+  definePageProperty(pageWindow, "KeyboardLayoutMap", {
+    value: KeyboardLayoutMapObject,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+
+
+  if (window.isSecureContext) {
   /** Implements the non-constructible Keyboard interface constructor. */
   function Keyboard() {
     illegalConstructor();
@@ -47,6 +269,11 @@ if (window.isSecureContext) {
     enumerable: false,
     configurable: true,
   });
+
+  let pageLockMethod = null;
+  let pageUnlockMethod = null;
+  let pageGetLayoutMapMethod = null;
+  let navigatorKeyboardGetter = null;
 
   /** Implements Keyboard.lock(). */
   function lock(keyCodes = []) {
@@ -88,12 +315,112 @@ if (window.isSecureContext) {
     keyboardService.unlock();
   }
 
+  /** Implements Keyboard.getLayoutMap(). */
+  function getLayoutMap() {
+    const resolved = resolveEventTargetReceiver(
+      this,
+      keyboardBrand,
+      "Keyboard",
+      "getLayoutMap",
+      pageGetLayoutMapMethod,
+    );
+    if (resolved.method) {
+      return Reflect.apply(resolved.method, resolved.receiver, arguments);
+    }
+
+    return pagePromise(async () => {
+      if (!(await keyboardPolicy.allowsKeyboardMap())) {
+        throw new DOMException(
+          "Keyboard Map is disabled by Permissions Policy",
+          "SecurityError",
+        );
+      }
+
+      const selected = await browser.runtime.sendMessage({
+        type: "webkeyboard-layout",
+        action: "getLayout",
+      });
+      if (!selected?.data) {
+        throw new DOMException("Keyboard layout data is unavailable", "OperationError");
+      }
+      return createKeyboardLayoutMap(selected.data);
+    });
+  }
+
+
+  /** Runs the current layoutchange EventHandler value. */
+  function runLayoutChangeHandler(receiver, event) {
+    const handler = layoutChangeHandlers.get(receiver);
+    if (typeof handler !== "function") return;
+
+    const result = Reflect.apply(handler, receiver, [event]);
+    if (result === false) {
+      Reflect.apply(event.preventDefault, event, []);
+    }
+  }
+
+  /** Implements Keyboard.onlayoutchange. */
+  function getOnLayoutChange() {
+    const receiver = requireBrand(this, keyboardBrand);
+    return layoutChangeHandlers.get(receiver) ?? null;
+  }
+
+  /** Implements the Keyboard.onlayoutchange EventHandler setter. */
+  function setOnLayoutChange(value) {
+    const receiver = requireBrand(this, keyboardBrand);
+    const handler = normalizeEventHandlerValue(value);
+
+    if (handler === null) {
+      layoutChangeHandlers.delete(receiver);
+      const listener = layoutChangeListeners.get(receiver);
+      if (listener) {
+        Reflect.apply(pageRemoveEventListener, receiver, [
+          "layoutchange",
+          listener,
+        ]);
+        layoutChangeListeners.delete(receiver);
+      }
+      return;
+    }
+
+    layoutChangeHandlers.set(receiver, handler);
+    requestLayoutChangeWatch();
+    if (layoutChangeListeners.has(receiver)) return;
+
+    const listener = exportToPage((event) =>
+      runLayoutChangeHandler(receiver, event),
+    );
+    layoutChangeListeners.set(receiver, listener);
+    Reflect.apply(pageAddEventListener, receiver, ["layoutchange", listener]);
+  }
+
+  function requestLayoutChangeWatch() {
+    if (typeof request === "undefined" || typeof request.watchLayoutChanges !== "function") return;
+    request.watchLayoutChanges().catch(() => {});
+  }
+
+  function addEventListener(type, callback, options) {
+    const receiver = requireBrand(this, keyboardBrand);
+    const eventType = convertDOMString(type);
+    const result = Reflect.apply(pageAddEventListener, receiver, [
+      eventType,
+      unwrap(callback),
+      unwrap(options),
+    ]);
+    if (eventType === "layoutchange") requestLayoutChangeWatch();
+    return result;
+  }
+
   pageLockMethod = exportToPage(lock);
   pageUnlockMethod = exportToPage(unlock);
+  pageGetLayoutMapMethod = exportToPage(getLayoutMap);
+  const pageOnLayoutChangeGetter = exportToPage(getOnLayoutChange);
+  const pageOnLayoutChangeSetter = exportToPage(setOnLayoutChange);
 
   for (const [name, method] of [
     ["lock", pageLockMethod],
     ["unlock", pageUnlockMethod],
+    ["getLayoutMap", pageGetLayoutMapMethod],
   ]) {
     definePageProperty(KeyboardPrototype, name, {
       value: method,
@@ -102,10 +429,29 @@ if (window.isSecureContext) {
       configurable: true,
     });
   }
+  definePageProperty(KeyboardPrototype, "addEventListener", {
+    value: exportToPage(addEventListener),
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+
+  definePageProperty(KeyboardPrototype, "onlayoutchange", {
+    get: pageOnLayoutChangeGetter,
+    set: pageOnLayoutChangeSetter,
+    enumerable: true,
+    configurable: true,
+  });
 
   const keyboardInstance = unwrap(new PageEventTarget());
   setPagePrototype(keyboardInstance, KeyboardPrototype);
   keyboardBrand.add(keyboardInstance);
+  if (typeof request !== "undefined") {
+    request.onLayoutChange(() => {
+      const event = new window.Event("layoutchange");
+      Reflect.apply(pageDispatchEvent, keyboardInstance, [event]);
+    });
+  }
 
   definePageProperty(pageWindow, "Keyboard", {
     value: KeyboardObject,
@@ -150,4 +496,5 @@ if (window.isSecureContext) {
     enumerable: true,
     configurable: true,
   });
+}
 }

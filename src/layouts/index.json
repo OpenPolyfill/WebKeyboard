@@ -1,0 +1,88 @@
+{
+  "provenance": {
+    "source": "xkeyboard-config",
+    "rules": "evdev",
+    "model": "pc105",
+    "level": "unmodified level 0",
+    "compiledWith": "libxkbcommon 1.13.2"
+  },
+  "layouts": [
+    {
+      "id": "xkb:us",
+      "file": "us.json",
+      "source": {
+        "project": "xkeyboard-config",
+        "rules": "evdev",
+        "model": "pc105",
+        "layout": "us",
+        "variant": ""
+      }
+    },
+    {
+      "id": "xkb:gb",
+      "file": "gb.json",
+      "source": {
+        "project": "xkeyboard-config",
+        "rules": "evdev",
+        "model": "pc105",
+        "layout": "gb",
+        "variant": ""
+      }
+    },
+    {
+      "id": "xkb:de",
+      "file": "de.json",
+      "source": {
+        "project": "xkeyboard-config",
+        "rules": "evdev",
+        "model": "pc105",
+        "layout": "de",
+        "variant": ""
+      }
+    },
+    {
+      "id": "xkb:fr",
+      "file": "fr.json",
+      "source": {
+        "project": "xkeyboard-config",
+        "rules": "evdev",
+        "model": "pc105",
+        "layout": "fr",
+        "variant": ""
+      }
+    },
+    {
+      "id": "xkb:jp",
+      "file": "jp.json",
+      "source": {
+        "project": "xkeyboard-config",
+        "rules": "evdev",
+        "model": "pc105",
+        "layout": "jp",
+        "variant": ""
+      }
+    },
+    {
+      "id": "xkb:kr",
+      "file": "kr.json",
+      "source": {
+        "project": "xkeyboard-config",
+        "rules": "evdev",
+        "model": "pc105",
+        "layout": "kr",
+        "variant": ""
+      }
+    },
+    {
+      "id": "xkb:br",
+      "file": "br.json",
+      "source": {
+        "project": "xkeyboard-config",
+        "rules": "evdev",
+        "model": "pc105",
+        "layout": "br",
+        "variant": ""
+      }
+    }
+  ]
+}

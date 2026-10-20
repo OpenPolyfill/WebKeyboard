@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "WebKeyboard",
   "version": "0.1.0",
-  "description": "WebKeyboard compatibility layer.",
+  "description": "Firefox WebKeyboard compatibility layer for the Keyboard API.",
   "browser_specific_settings": {
     "gecko": {
       "id": "@webkeyboard.openpolyfill",
@@ -15,7 +15,26 @@
       }
     }
   },
-  "permissions": [],
+  "permissions": [
+    "webRequest",
+    "storage",
+    "activeTab",
+    "nativeMessaging"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "action": {
+    "default_title": "Keyboard layout",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "scripts": [
+      "policy-sources.js",
+      "policy.js",
+      "background.js"
+    ]
+  },
   "content_scripts": [
     {
       "matches": [
@@ -24,6 +43,10 @@
       "js": [
         "content/isolated/utils/xray.js",
         "content/isolated/utils/webidl.js",
+        "policy-sources.js",
+        "content/isolated/internal/policy.js",
+        "content/isolated/internal/permissions.js",
+        "content/isolated/internal/protocol.js",
         "content/isolated/service.js",
         "content/isolated/facade.js"
       ],

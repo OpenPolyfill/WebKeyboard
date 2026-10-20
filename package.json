@@ -1,16 +1,19 @@
 {
   "name": "webkeyboard",
   "version": "0.1.0",
-  "description": "A privileged compatibility layer for the WICG Keyboard API.",
+  "description": "A Firefox compatibility layer for the WICG Keyboard API.",
   "license": "Apache-2.0 OR MIT",
   "author": "OpenPolyfill",
   "type": "commonjs",
   "scripts": {
     "build-for-amo": "npm run build",
     "fx-build": "npm run build",
-    "build": "web-ext build -s src -a dist --overwrite-dest"
+    "build": "web-ext build -s src -a dist --overwrite-dest",
+    "test": "node scripts/test-with-native-host.mjs"
   },
   "devDependencies": {
+    "@openpolyfill/firefox-addon-playwright-harness": "^0.2.0",
+    "@playwright/test": "^1.64.1",
     "web-ext": "^10.5.0"
   },
   "overrides": {
@@ -18,5 +21,8 @@
     "brace-expansion": "5.0.9",
     "shell-quote": "1.10.0",
     "image-size": "2.0.3"
+  },
+  "allowScripts": {
+    "@openpolyfill/firefox-addon-playwright-harness": true
   }
 }
