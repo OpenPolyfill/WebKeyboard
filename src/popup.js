@@ -12,7 +12,9 @@ async function start() {
     send("listCustomLayouts"),
     send("listLayouts"),
   ]);
-  const choices = [{ id: "system", name: "System (currently US)" }, ...standardLayouts, ...customs.map((x) => ({ id: `custom:${x.id}`, name: `${x.name} (custom)` }))];
+  const systemLayoutName = saved.systemLayoutName;
+  const systemChoice = systemLayoutName ? `System (${systemLayoutName})` : "System";
+  const choices = [{ id: "system", name: systemChoice }, ...standardLayouts, ...customs.map((x) => ({ id: `custom:${x.id}`, name: `${x.name} (custom)` }))];
   function render() {
     const matches = choices.filter((x) => x.name.toLowerCase().includes(input.value.trim().toLowerCase()));
     options.replaceChildren(...matches.map((choice) => {

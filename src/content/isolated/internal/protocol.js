@@ -8,6 +8,7 @@ const request = (() => {
   const pending = new Map();
   const layoutChangeListeners = new Set();
   let nextId = 0;
+  let layoutWatchRequest;
   let disconnected = false;
 
   /** Creates a transport state error. */
@@ -79,6 +80,15 @@ const request = (() => {
         reject(error);
       }
     });
+  };
+  send.watchLayoutChanges = () => {
+    if (!layoutWatchRequest) {
+      layoutWatchRequest = send("watchLayoutChanges").catch((error) => {
+        layoutWatchRequest = undefined;
+        throw error;
+      });
+    }
+    return layoutWatchRequest;
   };
   send.onLayoutChange = (listener) => {
     layoutChangeListeners.add(listener);

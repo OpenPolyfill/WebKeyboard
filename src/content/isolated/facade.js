@@ -384,6 +384,7 @@
     }
 
     layoutChangeHandlers.set(receiver, handler);
+    requestLayoutChangeWatch();
     if (layoutChangeListeners.has(receiver)) return;
 
     const listener = exportToPage((event) =>
@@ -391,6 +392,23 @@
     );
     layoutChangeListeners.set(receiver, listener);
     Reflect.apply(pageAddEventListener, receiver, ["layoutchange", listener]);
+  }
+
+  function requestLayoutChangeWatch() {
+    if (typeof request === "undefined" || typeof request.watchLayoutChanges !== "function") return;
+    request.watchLayoutChanges().catch(() => {});
+  }
+
+  function addEventListener(type, callback, options) {
+    const receiver = requireBrand(this, keyboardBrand);
+    const eventType = convertDOMString(type);
+    const result = Reflect.apply(pageAddEventListener, receiver, [
+      eventType,
+      unwrap(callback),
+      unwrap(options),
+    ]);
+    if (eventType === "layoutchange") requestLayoutChangeWatch();
+    return result;
   }
 
   pageLockMethod = exportToPage(lock);
@@ -411,6 +429,12 @@
       configurable: true,
     });
   }
+  definePageProperty(KeyboardPrototype, "addEventListener", {
+    value: exportToPage(addEventListener),
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
 
   definePageProperty(KeyboardPrototype, "onlayoutchange", {
     get: pageOnLayoutChangeGetter,

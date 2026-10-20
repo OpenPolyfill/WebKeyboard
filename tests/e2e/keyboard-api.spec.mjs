@@ -1,4 +1,12 @@
 import { test, expect } from './fixtures.mjs';
+const expectedSystemMap = JSON.parse(
+  process.env.WEBKEYBOARD_EXPECT_SYSTEM_MAP || '{"keyA":"a","keyY":"y","keyZ":"z"}',
+);
+const expectedSystemSize = process.env.WEBKEYBOARD_EXPECT_SYSTEM_SIZE === undefined
+  ? null
+  : Number(process.env.WEBKEYBOARD_EXPECT_SYSTEM_SIZE);
+const expectedSystemChoice = process.env.WEBKEYBOARD_EXPECT_SYSTEM_CHOICE ||
+  `System (${process.env.WEBKEYBOARD_EXPECT_SYSTEM_LAYOUT || 'English (US)'})`;
 
 test('per-origin selection updates KeyboardLayoutMap and emits layoutchange', async ({ page, context, extension }) => {
   let initial = null;
@@ -18,7 +26,13 @@ test('per-origin selection updates KeyboardLayoutMap and emits layoutchange', as
       }
       try {
         const map = await keyboard.getLayoutMap();
-        return { ok: true, keyA: map.get('KeyA'), size: map.size };
+        return {
+          ok: true,
+          keyA: map.get('KeyA') ?? null,
+          keyY: map.get('KeyY') ?? null,
+          keyZ: map.get('KeyZ') ?? null,
+          size: map.size,
+        };
       } catch (error) {
         return {
           ok: false,
@@ -29,17 +43,22 @@ test('per-origin selection updates KeyboardLayoutMap and emits layoutchange', as
         };
       }
     });
-    if (initial?.ok && initial.keyA) break;
+    if (initial?.ok) break;
     if (!['SecurityError', 'UnavailableError'].includes(initial?.error?.name)) break;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  expect(initial, JSON.stringify(initial)).toMatchObject({ ok: true, keyA: 'a' });
-  expect(initial.size).toBeGreaterThan(0);
+  expect(initial, JSON.stringify(initial)).toMatchObject({ ok: true, ...expectedSystemMap });
+  if (expectedSystemSize === null) expect(initial.size).toBeGreaterThan(0);
+  else expect(initial.size).toBe(expectedSystemSize);
   await page.evaluate(() => {
     window.layoutChangeCount = 0;
+    window.onLayoutChangeCount = 0;
     navigator.keyboard.addEventListener('layoutchange', () => {
       window.layoutChangeCount += 1;
     });
+    navigator.keyboard.onlayoutchange = () => {
+      window.onLayoutChangeCount += 1;
+    };
   });
 
   const popup = await extension.activateAction(page, 'browserAction');
@@ -48,14 +67,14 @@ test('per-origin selection updates KeyboardLayoutMap and emits layoutchange', as
   expect(await popup.evaluate(() =>
     [...document.querySelectorAll('#options button')]
       .find((button) => button.getAttribute('aria-selected') === 'true')?.textContent,
-  )).toBe('System (currently US)');
+  )).toBe(expectedSystemChoice);
   await popup.evaluate(() => {
     const button = [...document.querySelectorAll('#options button')]
       .find((candidate) => candidate.textContent === 'German');
     if (!button) throw new Error('German XKB preset is missing');
     button.click();
   });
-  await page.waitForFunction(() => window.layoutChangeCount === 1);
+  await page.waitForFunction(() => window.layoutChangeCount === 1 && window.onLayoutChangeCount === 1);
 
   let german = null;
   for (let attempt = 0; attempt < 40; attempt += 1) {
@@ -88,6 +107,7 @@ test('per-origin selection updates KeyboardLayoutMap and emits layoutchange', as
   expect(persistedLayout).toBe('z');
 
   const otherOrigin = await context.newPage();
+  const expectedSystemKeyY = expectedSystemMap.keyY;
   let otherOriginState = null;
   for (let attempt = 0; attempt < 10; attempt += 1) {
     await otherOrigin.goto(`http://localhost:4173/?origin-attempt=${attempt}`);
@@ -106,12 +126,12 @@ test('per-origin selection updates KeyboardLayoutMap and emits layoutchange', as
         return { keyY: null, error: { name: error.name, message: error.message } };
       }
     });
-    if (otherOriginState.error === null && otherOriginState.keyY === 'y') break;
+    if (otherOriginState.error === null && otherOriginState.keyY === expectedSystemKeyY) break;
     if (!['SecurityError', 'UnavailableError'].includes(otherOriginState.error?.name)) break;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   expect(otherOriginState, JSON.stringify(otherOriginState)).toMatchObject({
-    keyY: 'y',
+    keyY: expectedSystemKeyY,
     error: null,
   });
   await otherOrigin.close();
@@ -125,15 +145,18 @@ test('Permissions Policy denial is enforced after an allowed decision', async ({
       try {
         const status = await navigator.permissions.query({ name: 'keyboard-map' });
         const map = await navigator.keyboard.getLayoutMap();
-        return { permission: status.state, keyA: map.get('KeyA') };
+        return { permission: status.state, keyA: map.get('KeyA') ?? null };
       } catch (error) {
         return { permission: 'denied', errorName: error.name };
       }
     });
-    if (allowed.permission === 'granted' && allowed.keyA === 'a') break;
+    if (allowed.permission === 'granted' && allowed.keyA === expectedSystemMap.keyA) break;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  expect(allowed, JSON.stringify(allowed)).toEqual({ permission: 'granted', keyA: 'a' });
+  expect(allowed, JSON.stringify(allowed)).toEqual({
+    permission: 'granted',
+    keyA: expectedSystemMap.keyA,
+  });
 
   await page.goto('/deny');
   await page.waitForFunction(() => typeof navigator.keyboard?.getLayoutMap === 'function');
