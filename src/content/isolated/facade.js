@@ -295,7 +295,13 @@
       return rejectedPagePromise(error);
     }
 
-    return pagePromise(() => keyboardService.lock(codes));
+    let operation;
+    try {
+      operation = keyboardService.lock(codes);
+    } catch (error) {
+      return rejectedPagePromise(error);
+    }
+    return pagePromise(() => operation);
   }
 
   /** Implements Keyboard.unlock(). */
@@ -490,11 +496,13 @@
     configurable: true,
   });
 
-  definePageProperty(PageNavigator.prototype, "keyboard", {
-    get: navigatorKeyboardGetter,
-    set: undefined,
-    enumerable: true,
-    configurable: true,
+  keyboardService.ready.then(() => {
+    definePageProperty(PageNavigator.prototype, "keyboard", {
+      get: navigatorKeyboardGetter,
+      set: undefined,
+      enumerable: true,
+      configurable: true,
+    });
   });
 }
 }

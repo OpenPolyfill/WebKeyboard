@@ -547,6 +547,17 @@ async function handleControlRequest(port, sender, request) {
   }
 
   switch (request.operation) {
+    case "getKeyboardBackend": {
+      try {
+        return {
+          privileged:
+            typeof browser.keyboard?.lock === "function" &&
+            typeof browser.keyboard?.unlock === "function",
+        };
+      } catch {
+        return { privileged: false };
+      }
+    }
     case "lock": {
       const codes = request.payload;
       lockOwners.set(tabId, port);

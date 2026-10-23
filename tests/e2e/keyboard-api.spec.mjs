@@ -174,41 +174,108 @@ test('Permissions Policy denial is enforced after an allowed decision', async ({
 });
 
 
-test('Keyboard Lock routes browser shortcuts in fullscreen and rejects selective keys without the optional backend', async ({ page }) => {
-  await page.goto('/');
-  await page.waitForFunction(() => typeof navigator.keyboard?.lock === 'function');
-  await page.locator('#fullscreen').click();
-  await page.waitForFunction(() => Boolean(document.fullscreenElement));
-  await page.evaluate(() => {
-    window.lockedShortcut = null;
-    document.addEventListener('keydown', (event) => {
-      if (event.code === 'KeyW' && event.ctrlKey) {
-        window.lockedShortcut = { code: event.code, ctrlKey: event.ctrlKey };
+const privilegedBackend = process.env.WEBKEYBOARD_PRIVILEGED === '1';
+
+if (!privilegedBackend) {
+  test('fullscreen backend arms before the page fullscreen request and unlocks in fullscreen', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForFunction(() => typeof navigator.keyboard?.lock === 'function');
+    await page.evaluate(() => {
+      document.querySelector('#fullscreen').addEventListener(
+        'click',
+        () => { window.lockBeforeFullscreen = navigator.keyboard.lock(); },
+        { capture: true, once: true },
+      );
+    });
+    await page.locator('#fullscreen').click();
+    await page.waitForFunction(() => Boolean(document.fullscreenElement));
+    expect(await page.evaluate(() => window.lockBeforeFullscreen.then(() => true))).toBe(true);
+    await page.evaluate(() => navigator.keyboard.unlock());
+    expect(await page.evaluate(() => Boolean(document.fullscreenElement))).toBe(true);
+  });
+
+  test('fullscreen backend retains its lock after a rejected fullscreen request and routes shortcuts', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForFunction(() => typeof navigator.keyboard?.lock === 'function');
+    await page.locator('#fullscreen').click();
+    await page.waitForFunction(() => Boolean(document.fullscreenElement));
+    await page.evaluate(() => {
+      window.lockedShortcut = null;
+      document.addEventListener('keydown', (event) => {
+        if (event.code === 'KeyW' && event.ctrlKey) {
+          window.lockedShortcut = { code: event.code, ctrlKey: event.ctrlKey };
+        }
+      });
+    });
+    await page.evaluate(() => navigator.keyboard.lock());
+    const rejected = await page.evaluate(async () => {
+      try {
+        await document.createElement('div').requestFullscreen();
+        return false;
+      } catch {
+        return true;
       }
     });
+    expect(rejected).toBe(true);
+    expect(await page.evaluate(() => Boolean(document.fullscreenElement))).toBe(true);
+    await page.keyboard.press('Control+w');
+    await expect.poll(() => page.evaluate(() => window.lockedShortcut)).toEqual({
+      code: 'KeyW',
+      ctrlKey: true,
+    });
+    expect(page.isClosed()).toBe(false);
+    await page.evaluate(() => navigator.keyboard.unlock());
   });
+} else {
+  test('privileged backend preserves fullscreen routing and lock replacement semantics', async ({ page }) => {
+    await page.addInitScript(() => {
+      window.__nativeRequestFullscreen = Element.prototype.requestFullscreen;
+    });
+    await page.goto('/');
+    expect(await page.evaluate(() =>
+      window.__nativeRequestFullscreen === Element.prototype.requestFullscreen,
+    )).toBe(true);
+    await page.waitForFunction(() => typeof navigator.keyboard?.lock === 'function');
+    await page.locator('#fullscreen').click();
+    await page.waitForFunction(() => Boolean(document.fullscreenElement));
 
-  const shortcutLock = await page.evaluate(async () => {
-    await navigator.keyboard.lock();
-    return 'resolved';
-  });
-  expect(shortcutLock).toBe('resolved');
-  await page.keyboard.press('Control+w');
-  await expect.poll(() => page.evaluate(() => window.lockedShortcut)).toEqual({
-    code: 'KeyW',
-    ctrlKey: true,
-  });
-  expect(page.isClosed()).toBe(false);
+    await page.evaluate(() => {
+      window.lockedShortcut = null;
+      document.addEventListener('keydown', (event) => {
+        if (event.code === 'KeyW' && event.ctrlKey) {
+          window.lockedShortcut = { code: event.code, ctrlKey: event.ctrlKey };
+        }
+      });
+    });
+    await page.evaluate(() => navigator.keyboard.lock());
+    await page.keyboard.press('Control+w');
+    await expect.poll(() => page.evaluate(() => window.lockedShortcut)).toEqual({
+      code: 'KeyW',
+      ctrlKey: true,
+    });
+    expect(page.isClosed()).toBe(false);
 
-  const selectiveError = await page.evaluate(async () => {
-    try {
-      await navigator.keyboard.lock(['KeyA']);
-      return null;
-    } catch (error) {
-      return error.name;
-    }
+    const replacement = await page.evaluate(async () => {
+      const fullLock = navigator.keyboard.lock();
+      const fullResult = fullLock.then(
+        () => 'resolved',
+        (error) => error.name,
+      );
+      await navigator.keyboard.lock(['KeyW']);
+      return { full: await fullResult };
+    });
+    expect(replacement).toEqual({ full: 'AbortError' });
+
+    const cancelled = await page.evaluate(async () => {
+      const pending = navigator.keyboard.lock(['KeyA']);
+      const result = pending.then(
+        () => 'resolved',
+        (error) => error.name,
+      );
+      navigator.keyboard.unlock();
+      return result;
+    });
+    expect(cancelled).toBe('AbortError');
   });
-  expect(selectiveError).toBe('NotSupportedError');
-  await page.evaluate(() => navigator.keyboard.unlock());
-});
+}
 

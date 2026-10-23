@@ -3,22 +3,25 @@
 
 const keyboardService = (() => {
   const pageDocument = unwrap(window.document);
-  const fullscreenLock = (() => {
-    const pageElementPrototype = unwrap(window.Element.prototype);
-    const nativeRequestFullscreen = Reflect.get(pageElementPrototype, "requestFullscreen");
-    const requestDescriptor = Reflect.getOwnPropertyDescriptor(pageElementPrototype, "requestFullscreen");
+  function createFullscreenLock() {
+    const prototype = unwrap(window.Element.prototype);
+    const nativeRequest = Reflect.get(prototype, "requestFullscreen");
+    const descriptor = Reflect.getOwnPropertyDescriptor(prototype, "requestFullscreen");
     let armed = false;
     let induced = false;
     let generation = 0;
 
-    function withKeyboardLock(options, mode) {
+    function optionsWithLock(options, mode) {
       const forwarded = unwrap(new window.Object());
       const source = unwrap(options);
       if (source && (typeof source === "object" || typeof source === "function")) {
         setPagePrototype(forwarded, source);
       }
       definePageProperty(forwarded, "keyboardLock", {
-        value: mode, writable: true, enumerable: true, configurable: true,
+        value: mode,
+        writable: true,
+        enumerable: true,
+        configurable: true,
       });
       return forwarded;
     }
@@ -27,7 +30,9 @@ const keyboardService = (() => {
       if (options === undefined || options === null) return "none";
       try {
         let source = unwrap(options);
-        if (source === null || (typeof source !== "object" && typeof source !== "function")) return "invalid";
+        if (source === null || (typeof source !== "object" && typeof source !== "function")) {
+          return "invalid";
+        }
         while (source !== null) {
           const property = Reflect.getOwnPropertyDescriptor(source, "keyboardLock");
           if (property) {
@@ -44,43 +49,53 @@ const keyboardService = (() => {
       }
     }
 
-    function requestWithKeyboardLock(element, mode) {
+    function requestWithLock(element, mode) {
+      const previous = induced;
+      const current = ++generation;
+      induced = mode === "browser";
+      let result;
       try {
-        Promise.resolve(Reflect.apply(nativeRequestFullscreen, element, [
-          withKeyboardLock(undefined, mode),
-        ])).catch(() => {});
-      } catch (_) {}
+        result = Reflect.apply(nativeRequest, element, [optionsWithLock(undefined, mode)]);
+      } catch (_) {
+        if (current === generation) induced = previous;
+        return;
+      }
+      Promise.resolve(result).catch(() => {
+        if (current === generation) induced = previous;
+      });
     }
 
     function wrappedRequestFullscreen(options = undefined) {
-      const requestedLock = parseKeyboardLock(options);
+      const requested = parseKeyboardLock(options);
+      const previous = induced;
       const current = ++generation;
       let args = arguments;
-      if (requestedLock !== "invalid" && armed) {
-        induced = requestedLock !== "browser";
-        args = [withKeyboardLock(options, "browser")];
-      } else {
+      if (requested !== "invalid" && armed) {
+        induced = requested !== "browser";
+        args = [optionsWithLock(options, "browser")];
+      } else if (requested !== "invalid") {
         induced = false;
       }
+
       let result;
       try {
-        result = Reflect.apply(nativeRequestFullscreen, unwrap(this), args);
+        result = Reflect.apply(nativeRequest, unwrap(this), args);
       } catch (error) {
-        if (current === generation) induced = false;
+        if (current === generation) induced = previous;
         throw error;
       }
       Promise.resolve(result).catch(() => {
-        if (current === generation) induced = false;
+        if (current === generation) induced = previous;
       });
       return result;
     }
 
-    if (window.isSecureContext && typeof nativeRequestFullscreen === "function" && requestDescriptor) {
-      definePageProperty(pageElementPrototype, "requestFullscreen", {
+    if (window.isSecureContext && typeof nativeRequest === "function" && descriptor) {
+      definePageProperty(prototype, "requestFullscreen", {
         value: exportToPage(wrappedRequestFullscreen),
-        writable: requestDescriptor.writable,
-        enumerable: requestDescriptor.enumerable,
-        configurable: requestDescriptor.configurable,
+        writable: descriptor.writable,
+        enumerable: descriptor.enumerable,
+        configurable: descriptor.configurable,
       });
     }
 
@@ -88,20 +103,37 @@ const keyboardService = (() => {
       arm() {
         armed = true;
         if (pageDocument.fullscreenElement && !induced) {
-          induced = true;
-          requestWithKeyboardLock(pageDocument.fullscreenElement, "browser");
+          requestWithLock(pageDocument.fullscreenElement, "browser");
         }
       },
       disarm() {
         armed = false;
         ++generation;
         if (induced && pageDocument.fullscreenElement) {
-          requestWithKeyboardLock(pageDocument.fullscreenElement, "none");
+          requestWithLock(pageDocument.fullscreenElement, "none");
+        } else if (!pageDocument.fullscreenElement) {
+          induced = false;
         }
-        induced = false;
       },
     };
-  })();
+  }
+
+  let selectedBackend = null;
+  let fullscreenLock = null;
+  const ready = request("getKeyboardBackend").then(
+    (capabilities) => {
+      selectedBackend = capabilities?.privileged ? "privileged" : "fullscreen";
+      if (selectedBackend === "fullscreen") {
+        fullscreenLock = createFullscreenLock();
+      }
+      return selectedBackend;
+    },
+    () => {
+      selectedBackend = "fullscreen";
+      fullscreenLock = createFullscreenLock();
+      return selectedBackend;
+    },
+  );
 
 
   const WRITING_SYSTEM_CODES = new Set([
@@ -349,13 +381,17 @@ const keyboardService = (() => {
    */
   function lock(codes) {
     assertActiveTopLevel();
+    if (!selectedBackend) return ready.then(() => lock(codes));
     abortPendingLock();
 
     try {
       codes = validateCodes(codes);
     } catch (error) {
-      return queueMutation(async () => {
+      if (selectedBackend === "fullscreen") {
         fullscreenLock.disarm();
+        return Promise.reject(error);
+      }
+      return queueMutation(async () => {
         try {
           await request("unlock");
         } finally {
@@ -364,28 +400,28 @@ const keyboardService = (() => {
       });
     }
 
+    if (selectedBackend === "fullscreen") {
+      if (codes.length !== 0) {
+        return Promise.reject(
+          apiError(
+            "NotSupportedError",
+            "Selective keyboard locking requires the optional privileged backend",
+          ),
+        );
+      }
+      fullscreenLock.arm();
+      return Promise.resolve(undefined);
+    }
+
     return new Promise((resolve, reject) => {
       const entry = { reject, superseded: false };
       pendingLock = entry;
-
       queueMutation(async () => {
         if (entry.superseded) return;
-
         try {
-          try {
-            await request("lock", codes);
-          } catch (error) {
-            if (codes.length !== 0) {
-              throw apiError(
-                "NotSupportedError",
-                "Selective keyboard locking requires the optional privileged backend",
-              );
-            }
-          }
-          if (!entry.superseded && codes.length === 0) fullscreenLock.arm();
+          await request("lock", codes);
           if (!entry.superseded) resolve(undefined);
         } catch (error) {
-          fullscreenLock.disarm();
           if (!entry.superseded) reject(error);
         } finally {
           if (pendingLock === entry) pendingLock = null;
@@ -401,12 +437,15 @@ const keyboardService = (() => {
     } catch {
       return;
     }
-
-    queueMutation(() => {
+    abortPendingLock();
+    if (selectedBackend === "fullscreen") {
       fullscreenLock.disarm();
-      return request("unlock");
-    }).catch(() => {});
+      return;
+    }
+    if (selectedBackend === "privileged") {
+      queueMutation(() => request("unlock")).catch(() => {});
+    }
   }
 
-  return { lock, unlock };
+  return { lock, unlock, ready };
 })();

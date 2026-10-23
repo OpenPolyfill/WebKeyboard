@@ -10,6 +10,8 @@
     "fx-build": "npm run build",
     "build": "web-ext build -s src -a dist --overwrite-dest",
     "build:privileged": "node scripts/build-privileged.mjs",
+    "test:e2e": "playwright test",
+    "test:e2e:privileged": "node scripts/test-privileged-e2e.mjs",
     "test": "node scripts/test-with-native-host.mjs"
   },
   "devDependencies": {
