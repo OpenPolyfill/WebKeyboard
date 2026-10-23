@@ -21,12 +21,9 @@ generated from `evdev` rules with the `pc105` model for explicit preset choices.
 
 ## Install
 
-WebExtension Experiments must be enabled before loading the addon.
+Load `manifest.json` as a temporary add-on from `about:debugging` → **This Firefox** → **Load Temporary Add-on**. The default build uses the public Fullscreen API and does not require WebExtension Experiments.
 
-1. Open `about:config`.
-2. Set `extensions.experiments.enabled` to `true`.
-3. Open `about:debugging` → **This Firefox** → **Load Temporary Add-on**.
-4. Select `manifest.json` from the unpacked source tree.
+For the optional privileged upgrade, run `npm run build:privileged` and load the resulting add-on from `dist-privileged`. This build registers `src/experiment/schema.json` and `src/experiment/api.js`; it requires `extensions.experiments.enabled` in `about:config`. The default `npm run build` omits Experiments and remains usable with all-key locking.
 
 For an unsigned persistent install on Developer Edition or Nightly, also set `xpinstall.signatures.required` to `false`.
 
@@ -101,10 +98,10 @@ returns a page-realm `PermissionStatus` with `state` set to `"granted"` or
 
 ## Keyboard Lock
 
-The lock is armed by `lock()` and becomes effective while the top-level document is in DOM fullscreen.
+`lock()` with no codes arms an all-key lock. When fullscreen is already active or is requested later, the addon best-effort passes `keyboardLock: "browser"` through the public Fullscreen API; `unlock()` best-effort restores `"none"`. Selective key-code locking is available only with the optional privileged backend; without it, requests with codes reject.
 
 ```js
-await navigator.keyboard.lock(["KeyW"])
+await navigator.keyboard.lock()
 ```
 
 With the lock above:
@@ -132,11 +129,12 @@ Page Web API
 ISOLATED content script
     ↕ runtime.Port
 Background
-  ├─↕ WebExtension Experiment API
-  │    Firefox chrome / keyboard routing
-  └─↕ Native Messaging (optional)
+  ├─ public Fullscreen API (all-key fallback)
+  ├─ optional WebExtension Experiment API (selective lock upgrade)
+  └─ Native Messaging (optional)
        Rust host → OS keyboard layout APIs
 ```
+
 
 The content script runs at `document_start` and owns the page-facing API, WebIDL-style argument conversion, validation, lock sequencing, and background RPC.
 
@@ -148,7 +146,7 @@ lifetimes and replaces response policy on redirects. An eager policy port in
 every isolated frame queries the exact parent frame's `<iframe allow>`
 delegation through Firefox Xrays before `getLayoutMap()` resolves.
 
-The Experiment backend observes Firefox chrome keyboard events and updates `WindowGlobalParent` keyboard-lock routing per physical `KeyboardEvent.code`. Locked codes use Firefox's content-first keyboard-lock route; unlocked codes keep Firefox's normal browser-shortcut route.
+The optional Experiment backend observes Firefox chrome keyboard events and updates `WindowGlobalParent` keyboard-lock routing per physical `KeyboardEvent.code`. It is an upgrade for selective key locking; the default build does not require it.
 
 ## Secure contexts
 

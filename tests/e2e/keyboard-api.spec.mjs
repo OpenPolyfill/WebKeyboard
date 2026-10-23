@@ -174,7 +174,7 @@ test('Permissions Policy denial is enforced after an allowed decision', async ({
 });
 
 
-test('Keyboard Lock routes browser shortcuts in fullscreen and replaces pending requests', async ({ page }) => {
+test('Keyboard Lock routes browser shortcuts in fullscreen and rejects selective keys without the optional backend', async ({ page }) => {
   await page.goto('/');
   await page.waitForFunction(() => typeof navigator.keyboard?.lock === 'function');
   await page.locator('#fullscreen').click();
@@ -200,16 +200,15 @@ test('Keyboard Lock routes browser shortcuts in fullscreen and replaces pending 
   });
   expect(page.isClosed()).toBe(false);
 
-  const replacement = await page.evaluate(async () => {
-    const superseded = navigator.keyboard.lock(['KeyA']);
-    const supersededResult = superseded.then(
-      () => 'resolved',
-      (error) => error.name,
-    );
-    await navigator.keyboard.lock(['KeyW']);
-    return { superseded: await supersededResult };
+  const selectiveError = await page.evaluate(async () => {
+    try {
+      await navigator.keyboard.lock(['KeyA']);
+      return null;
+    } catch (error) {
+      return error.name;
+    }
   });
-  expect(replacement).toEqual({ superseded: 'AbortError' });
+  expect(selectiveError).toBe('NotSupportedError');
   await page.evaluate(() => navigator.keyboard.unlock());
 });
 

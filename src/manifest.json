@@ -55,21 +55,5 @@
       "match_about_blank": true,
       "world": "ISOLATED"
     }
-  ],
-  "experiment_apis": {
-    "keyboard": {
-      "schema": "experiment/schema.json",
-      "parent": {
-        "scopes": [
-          "addon_parent"
-        ],
-        "paths": [
-          [
-            "keyboard"
-          ]
-        ],
-        "script": "experiment/api.js"
-      }
-    }
-  }
+  ]
 }
